@@ -1,0 +1,427 @@
+#include "user_usart.h"
+#include "user_spi.h"
+#include "usart.h"
+#include "sdconfig.h"
+#include "tim.h"
+
+uint8_t processing_buffer[BUF_SIZE];
+uint8_t *wp = processing_buffer;
+uint8_t *rp = processing_buffer;
+volatile uint32_t receivercode = 0x10001;
+uint16_t cmd[cmd_number] = {0x0001, 0x0005, 0x0003, 0x0004};
+uint16_t command;
+uint8_t *rp1;
+uint8_t *rp2;
+uint8_t *rp3;
+uint8_t datalength;
+volatile uint16_t firmware = 0x0100;
+volatile uint16_t sampling_ready = 0;
+volatile uint16_t heartcount = 0;
+volatile uint64_t high_counter = 0;
+uint64_t base_timestamp = 0x62A93056F4000;
+uint64_t base_systick = 0;
+uint8_t state;
+volatile uint16_t txstate = 0;
+
+void Sampling(void);
+void Send_time(void);
+void Parameterset_query(void);
+void Sendheart(void);
+
+uint16_t read_be16(uint8_t *data)
+{
+    return (data[0] << 8) | data[1];
+}
+
+uint16_t Checksum(uint8_t *data, uint16_t length) //逐字节校检和
+{
+	uint16_t sum;
+    if(length <= 1)
+    {
+    	sum = (uint16_t)data[0];
+    	return sum;
+    }
+    else
+    {
+    	sum = (uint16_t)data[length-1]+Checksum(data, length - 1);
+    	return sum;
+    }
+}
+
+CMD_Status CMD_Judge(void)
+{
+	uint32_t rxcode = 0;
+	uint16_t time;
+	uint16_t checksum;
+	uint16_t SUM;
+	rp1 = rp;
+	rp2 = rp;
+	while (wp > rp)
+	{
+		uint16_t test = (*rp << 8) | *(rp + 1);
+		if(test == HEAD)
+			rp1 = rp;
+		if(test == TAIL)
+			rp2 = rp + 1;
+		rp++;
+		if(rp2 > rp1)
+			break;
+	}
+	if(rp == wp)
+	{
+		data_ready = 0;
+		return CMD_END;
+	}
+	for(uint16_t i = 2;i <= 4;i++)
+		rxcode = (*(rp1 + i) << (32 - 8*i)) | rxcode;
+	datalength = *(rp1 + 7);
+	for(time = 0;time < cmd_number;time++)
+	{
+		command = (*(rp1 + 5)<< 8) | *(rp1 + 6);
+		if(command == cmd[time])
+			break;
+	}
+	checksum = (*(rp2 - 3) << 8) | *(rp2 - 2);
+	rp3 = rp1 + 8;
+	SUM = Checksum(rp1 + 2, datalength + 6);
+	if(rxcode != receivercode)
+		return CODE_ERROE;
+	else if(datalength != rp2 - rp1 - 11)
+		return LENGTH_ERROE;
+	else if(time >= cmd_number)
+		return CMD_ERROR;
+	else if(checksum != SUM)
+		return CHECK_ERROR;
+	else
+		return CMD_OK;
+}
+
+CMD_Status CMD_Execute(void)
+{
+	if(command == cmd1)
+	{
+		if(datalength == 0x01 && *rp3 == 0x01)
+		{
+			Sampling();
+			sampling_ready = 0;
+			return CMD_OK;
+		}
+		else if(datalength == 0x01 && *rp3 == 0)
+		{
+			Sampling();
+			HAL_Delay(100);
+			sampling_ready = 1;
+			return CMD_OK;
+		}
+		else
+			return INVALID;
+	}
+	else if(command == cmd3)
+	{
+		Parameterset_query();
+		return CMD_OK;
+	}
+	else if(command == cmd4)
+	{
+		if(datalength != 0x01 || *rp3 != 0)
+			return INVALID;
+		else
+		{
+			Parameterset_query();
+			return CMD_OK;
+		}
+	}
+	else
+	{
+		Send_time();
+		return CMD_OK;
+	}
+}
+
+void Sampling(void) //发送采样相关的应答命令
+{
+	uint16_t length =  rp2 - rp1 + 1;
+	uint16_t SUM;
+	for(uint16_t i = 0;i < length;i++)
+	{
+		if(i == 5)
+			tx_buffer[i] = 0x01;
+		else if(i == length - 4)
+		{
+			SUM = Checksum(&tx_buffer[2], i - 2);
+			tx_buffer[i] = (SUM >> 8) & 0xFF;
+		}
+		else if(i == length - 3)
+			tx_buffer[i] = SUM & 0xFF;
+		else
+			tx_buffer[i] = *(rp1 + i);
+	}
+	txstate = 1;
+	HAL_UART_Transmit_DMA(&huart1, tx_buffer, length);
+}
+
+/*void update_config_value(char *config_buf, const char *key, int new_value) //更新配置文件内容，目前存在最后一行的转行问题，待修改
+{
+    char *ptr = strstr(config_buf, key);
+    if (ptr == NULL)
+    {
+        return;
+    }
+    char *value_start = ptr + strlen(key);
+    char *line_end = value_start;
+    while (*line_end != '\0' && *line_end != '\n')
+    {
+        line_end++;
+    }
+    char new_line[256];
+    snprintf(new_line, sizeof(new_line), "%s%d", key, new_value);
+    size_t new_line_len = strlen(new_line);
+    size_t tail_len = strlen(line_end);
+    memmove(ptr + new_line_len, line_end, tail_len);
+    memcpy(ptr, new_line, new_line_len);
+}*/
+
+void Parameterset_query(void) //参数设置查询函数
+{
+	uint16_t SUM;
+	if(command == cmd3)
+	{
+		PEAKTH = read_be16(rp3 + 3);
+		ALMSTTH = read_be16(rp3 + 5);
+		PKWND = read_be16(rp3 + 7);
+		ASIC_CMD(0x01, PEAKTH);
+		ASIC_CMD(0x02, ALMSTTH);
+		ASIC_CMD(0x04, PKWND);
+		/*char config_buf[256];
+		FIL fil;
+		UINT bytes_written;
+		if(read_config(config_buf, sizeof(config_buf)) == FR_OK)
+		{
+			update_config_value(config_buf, "Receivercode=", rxcode);
+			update_config_value(config_buf, "Frequency=", frequency);
+			update_config_value(config_buf, "PEAKTH=", PEAKTH);
+			update_config_value(config_buf, "ALMSTTH=", ALMSTTH);
+			update_config_value(config_buf, "PKWND=", PKWND);
+		}
+		f_open(&fil, CONFIG_FILE, FA_OPEN_ALWAYS | FA_WRITE);
+		f_write(&fil, config_buf, strlen(config_buf), &bytes_written);
+		f_close(&fil);*/
+		tx_buffer[rp3 - rp1 + 8] = 0x7E;
+		tx_buffer[rp3 - rp1 + 9] = 0xFE;
+	}
+	else
+	{
+		ReadResult();
+		tx_buffer[rp3 - rp1 + 6] = (firmware >> 8) & 0xFF;
+		tx_buffer[rp3 - rp1 + 7] = firmware & 0xFF;
+		tx_buffer[rp3 - rp1 + 10] = 0x7E;
+		tx_buffer[rp3 - rp1 + 11] = 0xFE;
+	}
+	for(uint16_t i = 0;i < rp3 - rp1 + 6;i++)
+	{
+		if(i < rp3 - rp1)
+			tx_buffer[i] = *(rp1 + i);
+		if(command == cmd3)
+		{
+			if(i >= 2 && i <= 4)
+				tx_buffer[i] = *(rp3 + i - 2);
+			if(i == 7)
+				tx_buffer[i] = 0x06;
+		}
+		if(command == cmd4 && i == 7)
+			tx_buffer[i] = 0x08;
+		if(i == 5)
+			tx_buffer[i] = 0x01;
+		if(i == rp3 - rp1)
+		{
+			tx_buffer[i] = (PEAKTH >> 8) & 0xFF;
+			tx_buffer[i + 1] = PEAKTH & 0xFF;
+		}
+		if(i == rp3 - rp1 + 2)
+		{
+			tx_buffer[i] = (ALMSTTH >> 8) & 0xFF;
+			tx_buffer[i + 1] = ALMSTTH & 0xFF;
+		}
+		if(i == rp3 - rp1 + 4)
+		{
+			tx_buffer[i] = (PKWND >> 8) & 0xFF;
+			tx_buffer[i + 1] = PKWND & 0xFF;
+		}
+	}
+	size_t txlen = 12 + tx_buffer[7];
+	size_t checklength = 6 + tx_buffer[7];
+	SUM = Checksum(&tx_buffer[2], checklength);
+	if(command == 3)
+	{
+		tx_buffer[rp3 - rp1 + 6] = (SUM >> 8) & 0xFF;
+		tx_buffer[rp3 - rp1 + 7] = SUM & 0xFF;
+	}
+	else
+	{
+		tx_buffer[rp3 - rp1 + 8] = (SUM >> 8) & 0xFF;
+		tx_buffer[rp3 - rp1 + 9] = SUM & 0xFF;
+	}
+	txstate = 1;
+	HAL_UART_Transmit_DMA(&huart1, tx_buffer, txlen);
+}
+
+uint64_t get_current_systick(void) //获取当前系统计时 (µs)
+{
+  uint32_t high1, low;
+  do
+  {
+    high1 = (uint32_t)(high_counter >> 32);
+    low = TIM2->CNT;
+  } while (high1 != (uint32_t)(high_counter >> 32));
+  return high_counter + low;
+}
+
+void set_base_time(uint64_t timestamp) // 设置时间基准
+{
+  base_timestamp = timestamp;
+  base_systick = get_current_systick();
+}
+
+uint64_t get_current_timestamp(void) //获取当前时间戳 (µs)
+{
+  uint64_t current_systick = get_current_systick();
+  return base_timestamp + (current_systick - base_systick);
+}
+
+void Send_time(void) // 校时
+{
+	uint64_t timestamp = 0;
+	for(uint16_t i = 0; i < 8;i++)
+	timestamp = (timestamp << 8) | *(rp3 + i);
+	set_base_time(timestamp);
+	uint64_t current_timestamp = get_current_timestamp();
+	for(uint16_t i = 0; i < 8;i++)
+	tx_buffer[i + 8] = (current_timestamp >> (56 - 8 * i)) & 0xFF;
+	for(uint16_t j = 0;j < rp3 - rp1;j++)
+	{
+		tx_buffer[j] = *(rp1 + j);
+		if(j == 5)
+			tx_buffer[j] = 0x01;
+	}
+	size_t checklength = 6 + tx_buffer[7];
+	size_t txlen = 12 + tx_buffer[7];
+	uint16_t SUM = Checksum(&tx_buffer[2], checklength);
+	tx_buffer[rp3 - rp1 + 8] = (SUM >> 8) & 0xFF;
+	tx_buffer[rp3 - rp1 + 9] = SUM & 0xFF;
+	uint16_t tail = TAIL;
+	tx_buffer[rp3 - rp1 + 10] = (tail >> 8) & 0xFF;
+	tx_buffer[rp3 - rp1 + 11] = tail & 0xFF;
+	txstate = 1;
+	HAL_UART_Transmit_DMA(&huart1, tx_buffer, txlen);
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM6)
+	  heartcount++;
+  if(heartcount >= 6)
+  {
+	  Sendheart();
+	  heartcount = 0;
+  }
+}
+
+void Sendheart(void) //发送心跳
+{
+	  uint16_t length = 14;
+	  static uint8_t hearttx[14];
+	  uint16_t head = HEAD;
+	  uint16_t tail = TAIL;
+	  hearttx[0] = (head >> 8) & 0xFF;
+	  hearttx[1] = head & 0xFF;
+	  hearttx[2] = (receivercode >> 16) & 0xFF;
+	  hearttx[3] = (receivercode >> 8) & 0xFF;
+	  hearttx[4] = receivercode & 0xFF;
+	  hearttx[5] = 0x01;
+	  hearttx[6] = 0x00;
+	  hearttx[7] = 0x02;
+	  hearttx[8] = state;
+	  hearttx[9] = sampling_ready;
+	  uint16_t SUM = Checksum(&hearttx[2], 7);
+	  hearttx[10] = (SUM >> 8) & 0xFF;
+	  hearttx[11] = SUM & 0xFF;
+	  hearttx[12] = (tail >> 8) & 0xFF;
+	  hearttx[13] = tail & 0xFF;
+	  HAL_UART_Transmit_DMA(&huart1, hearttx, length);
+}
+
+void Send_Data(void) // 数据上送
+{
+	  ReadResult();
+	  uint16_t length = 18;
+	  static uint8_t datatx[18];
+	  uint16_t head = HEAD;
+	  uint16_t tail = TAIL;
+	  datatx[0] = (head >> 8) & 0xFF;
+	  datatx[1] = head & 0xFF;
+	  datatx[2] = (receivercode >> 16) & 0xFF;
+	  datatx[3] = (receivercode >> 8) & 0xFF;
+	  datatx[4] = receivercode & 0xFF;
+	  datatx[5] = 0x01;
+	  datatx[6] = 0x02;
+	  datatx[7] = 0x06;
+	  for(uint16_t i = 0;i < 6;i++)
+		  datatx[i + 8] = result[i];
+	  uint16_t SUM = Checksum(&datatx[2], 12);
+	  datatx[14] = (SUM >> 8) & 0xFF;
+	  datatx[15] = SUM & 0xFF;
+	  datatx[16] = (tail >> 8) & 0xFF;
+	  datatx[17] = tail & 0xFF;
+	  if(sampling_ready == 1)
+	  {
+		  HAL_UART_Transmit_DMA(&huart1, datatx, length);
+		  HAL_Delay(1000);
+	  }
+}
+
+void maintain_processing_buffer(void)
+{
+	uint8_t *address = processing_buffer;
+    if (wp - address > BUF_SIZE/2 && rp - address > BUF_SIZE/2)
+    {
+        uint16_t move_len = BUF_SIZE/2;
+        __disable_irq();
+        memmove(processing_buffer, &processing_buffer[BUF_SIZE/2], move_len);
+        wp = wp - move_len;
+        rp = rp - move_len;
+        __enable_irq();
+    }
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart->Instance == USART1)
+	{
+		if(txstate == 1)
+			txstate = 0;
+	}
+}
+
+void CMD_HANDLE_ERROR(CMD_Status state)
+{
+	uint16_t head = HEAD;
+	uint16_t tail = TAIL;
+	tx_buffer[0] = (head >> 8) & 0xFF;
+	tx_buffer[1] = head & 0xFF;
+	tx_buffer[2] = (receivercode >> 16) & 0xFF;
+	tx_buffer[3] = (receivercode >> 8) & 0xFF;
+	tx_buffer[4] = receivercode & 0xFF;
+	tx_buffer[5] = 0x00;
+	tx_buffer[6] = 0xFF;
+	tx_buffer[7] = 0x02;
+	tx_buffer[8] = 0;
+	tx_buffer[9] = (uint8_t)state;
+	uint16_t SUM = Checksum(&tx_buffer[2], 8);
+	tx_buffer[10] = (SUM >> 8) & 0xFF;
+	tx_buffer[11] = SUM & 0xFF;
+	tx_buffer[12] = (tail >> 8) & 0xFF;
+	tx_buffer[13] = tail & 0xFF;
+	uint16_t length = 14;
+	txstate = 1;
+	HAL_UART_Transmit_DMA(&huart1, tx_buffer, length);
+}

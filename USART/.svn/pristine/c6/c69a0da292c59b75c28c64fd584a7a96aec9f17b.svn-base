@@ -1,0 +1,44 @@
+#ifndef INC_USER_USART_H_
+#define INC_USER_USART_H_
+
+#include "main.h"
+
+#define HEAD 0xAA55
+#define TAIL 0x7EFE
+#define cmd0 0x0000 //发送心跳
+#define cmd1 0x0001 //开始、停止采样
+#define cmd2 0x0002 //对时
+#define cmd3 0x0003 //设置参数
+#define cmd4 0x0004 //查询参数
+#define cmd_number  5 //cmd_number为命令数量
+
+extern volatile uint32_t rxcode;
+
+typedef enum
+{
+	CMD_OK = 0,
+	CMD_FORMAT_ERROR,
+	CMD_NOT_SUPPORTED,
+	CMD_ADDRESS_ERROR,
+	CMD_INVALID_DATA,
+	CMD_BUSY,
+	CMD_CHECK_ERROR
+}CMD_Status;
+
+#pragma pack(push, 1)
+typedef struct
+{
+	uint16_t head;
+	uint16_t version;
+	uint16_t code;
+	uint16_t command;
+	uint8_t datalength;
+	uint8_t data[];
+}PACKAGE_TypeDef;
+#pragma pack(pop)
+
+void Receive_Data(void);
+CMD_Status CMD_Judge(void);
+CMD_Status CMD_Execute(void);
+
+#endif
