@@ -1,5 +1,0 @@
-../Core/Src/user_spi.c:12:9:ASIC_TransmitReceive	32	static
-../Core/Src/user_spi.c:19:19:ASIC_CMD	24	static
-../Core/Src/user_spi.c:46:19:ReadResult	32	static
-../Core/Src/user_spi.c:66:6:ASIC_RST	8	static
-../Core/Src/user_spi.c:74:5:_write	24	static

@@ -1,8 +1,0 @@
-../Core/Src/user_usart.c:18:10:read_be16	16	static
-../Core/Src/user_usart.c:22:10:exchange	24	static
-../Core/Src/user_usart.c:30:10:Checksum	32	static
-../Core/Src/user_usart.c:45:6:Receive_Data	24	static
-../Core/Src/user_usart.c:62:6:Send_Data	32	static
-../Core/Src/user_usart.c:81:12:CMD_Judge	16	static
-../Core/Src/user_usart.c:125:12:CMD_Execute	16	static
-../Core/Src/user_usart.c:250:6:Parameterset_query	32	static
