@@ -12,11 +12,13 @@ extern "C" {
 #include "unistd.h"
 #include "stdbool.h"
 #include "inttypes.h"
+#include "time.h"
 
 void Error_Handler(void);
-extern uint8_t rx_buffer[64];
+extern uint8_t rx_buffer[2048];
 extern volatile uint16_t rx_length;
 extern volatile uint16_t data_ready;
+extern volatile uint8_t timing;
 
 #define LED_R_Pin GPIO_PIN_0
 #define LED_R_GPIO_Port GPIOA
@@ -34,8 +36,9 @@ extern volatile uint16_t data_ready;
 #define S1_GPIO_Port GPIOB
 #define S3_Pin GPIO_PIN_3
 #define S3_GPIO_Port GPIOB
-#define S4_Pin GPIO_PIN_4
-#define S4_GPIO_Port GPIOB
+#define PPS_Pin GPIO_PIN_4
+#define PPS_GPIO_Port GPIOB
+#define PPS_EXTI_IRQn EXTI4_IRQn
 
 #define ON_R()  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET) //红灯亮
 #define OFF_R()  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET) //红灯灭

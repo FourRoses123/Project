@@ -3,7 +3,7 @@
 
 #include "main.h"
 
-#define BUF_SIZE 1024
+#define BUF_SIZE 2048
 #define HEAD 0xAA55
 #define TAIL 0x7EFE
 #define cmd1 0x0001 //开始、停止采样
@@ -11,19 +11,20 @@
 #define cmd4 0x0004 //查询参数
 #define cmd5 0x0005 //对时
 #define cmd_number  4
-#define TX_QUEUE_SIZE 32
-#define MAX_PACKET_SIZE 128
+#define TX_QUEUE_SIZE 8 //队列最大数量
+#define MAX_PACKET_SIZE 1536 //单个队列发送的最大数据量
 
 extern uint8_t processing_buffer[BUF_SIZE];
 extern uint8_t *wp;
 extern uint8_t *rp;
 extern volatile uint16_t receivercode;
-extern volatile uint64_t high_counter;
+extern volatile time_t high_counter;
 extern volatile uint16_t sampling_ready;
 extern volatile uint16_t txstate;
 extern volatile uint16_t samplingstate;
 extern uint16_t transmitlength;
 extern uint8_t datatx[];
+extern time_t base_timestamp;
 
 typedef enum
 {
@@ -57,9 +58,12 @@ void datareply(void);
 void maintain_processing_buffer(void);
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart);
 void CMD_HANDLE_ERROR(CMD_Status state);
-void set_base_time(uint64_t timestamp);
-uint64_t get_current_systick(void);
-uint64_t get_current_timestamp(void);
+void set_base_time(time_t timestamp);
+time_t get_current_systick(void);
+time_t get_current_timestamp(void);
 void UART_Queue_Init(void);
+time_t standard_to_stamp(uint8_t *time);
+void GPS_message_process(uint8_t *time);
+uint8_t UART_Send_Data(uint8_t *data, uint16_t len);
 
 #endif

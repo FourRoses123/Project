@@ -211,6 +211,14 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
+  * @brief This function handles EXTI line4 interrupt.
+  */
+void EXTI4_IRQHandler(void)
+{
+  HAL_GPIO_EXTI_IRQHandler(PPS_Pin);
+}
+
+/**
   * @brief This function handles DMA1 channel2 global interrupt.
   */
 void DMA1_Channel2_IRQHandler(void)
@@ -276,10 +284,10 @@ void TIM2_IRQHandler(void)
   /* USER CODE END TIM2_IRQn 0 */
   HAL_TIM_IRQHandler(&htim2);
   if (__HAL_TIM_GET_FLAG(&htim2, TIM_FLAG_UPDATE))
-    {
-        __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
-        high_counter += 0x100000000;
-    }
+      {
+          __HAL_TIM_CLEAR_FLAG(&htim2, TIM_FLAG_UPDATE);
+          high_counter += 0x100000000;
+      }
   /* USER CODE BEGIN TIM2_IRQn 1 */
 
   /* USER CODE END TIM2_IRQn 1 */
@@ -320,27 +328,27 @@ void USART1_IRQHandler(void)
 {
   HAL_UART_IRQHandler(&huart1);
   if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)
-      {
-    	  __HAL_UART_CLEAR_IDLEFLAG(&huart1);
-    	  HAL_UART_AbortReceive(&huart1);
-    	  rx_length = sizeof(rx_buffer) - __HAL_DMA_GET_COUNTER(huart1.hdmarx);
-    	  __disable_irq();
-    	  if(rp != wp && wp + rx_length <= &processing_buffer[BUF_SIZE])
-    	  {
-    		  memcpy(wp, rx_buffer, rx_length);
-    		  wp += rx_length;
-    	  }
-    	  else
-    	  {
-    		  memcpy(processing_buffer, rx_buffer, rx_length);
-    		  rp = processing_buffer;
-    		  wp = rp + rx_length;
-    	  }
-		  __enable_irq();
-		  if(rx_length > 0)
-			  data_ready = 1;
-    	  HAL_UART_Receive_DMA(&huart1, rx_buffer, sizeof(rx_buffer));
-      }
+	{
+	  __HAL_UART_CLEAR_IDLEFLAG(&huart1);
+	  HAL_UART_AbortReceive(&huart1);
+	  rx_length = sizeof(rx_buffer) - __HAL_DMA_GET_COUNTER(huart1.hdmarx);
+	  __disable_irq();
+	  if(rp != wp && wp + rx_length <= &processing_buffer[BUF_SIZE])
+	  {
+		  memcpy(wp, rx_buffer, rx_length);
+		  wp += rx_length;
+	  }
+	  else
+	  {
+		  memcpy(processing_buffer, rx_buffer, rx_length);
+		  rp = processing_buffer;
+		  wp = rp + rx_length;
+	  }
+	  __enable_irq();
+	  if(rx_length > 0)
+		  data_ready = 1;
+	  HAL_UART_Receive_DMA(&huart1, rx_buffer, sizeof(rx_buffer));
+	}
 }
 
 /**

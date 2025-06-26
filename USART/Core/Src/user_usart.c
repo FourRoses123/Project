@@ -18,9 +18,9 @@ uint8_t *rp3; //在运行过程中将指向数据第一个字节
 uint8_t datalength; //记录数据包中数据部分长度的全局变量
 uint16_t firmware = 0x0100; //固件版本
 volatile uint16_t sampling_ready = 1; //采样标记
-volatile uint64_t high_counter = 0; //定时器为32位，高32位需由该变量保存
-uint64_t base_timestamp = 0; //记录基准时间戳的全局变量,本地时间
-uint64_t base_systick = 0; //记录设置时间基准时的定时器数据
+volatile time_t high_counter = 0; //定时器为32位，高32位需由该变量保存
+time_t base_timestamp = 0; //记录基准时间戳的全局变量,本地时间
+time_t base_systick = 0; //记录设置时间基准时的定时器数据
 volatile uint8_t state = 0; //设备状态
 volatile uint8_t retransmit = 1; //是否重发
 uint16_t FREQ = 60; //频率
@@ -257,7 +257,7 @@ void Parameterset_query(void) //参数设置查询函数
 	UART_Send_Data(tx_buffer, txlen);
 }
 
-uint64_t get_current_systick(void) //获取当前系统计时 (µs)
+time_t get_current_systick(void) //获取当前系统计时 (µs)
 {
   uint32_t high1, low;
   do
@@ -268,21 +268,21 @@ uint64_t get_current_systick(void) //获取当前系统计时 (µs)
   return high_counter + low; // 返回64位，低32位为定时器记录，高32位由high_counter记录
 }
 
-void set_base_time(uint64_t timestamp) // 设置时间基准
+void set_base_time(time_t timestamp) // 设置时间基准
 {
   base_timestamp = timestamp;
   base_systick = get_current_systick();
 }
 
-uint64_t get_current_timestamp(void) //获取当前时间戳 (µs)
+time_t get_current_timestamp(void) //获取当前时间戳 (µs)
 {
-  uint64_t current_systick = get_current_systick();
+  time_t current_systick = get_current_systick();
   return base_timestamp + (current_systick - base_systick);
 }
 
 void Send_time(void) // 校时
 {
-	uint64_t timestamp = 0;
+	time_t timestamp = 0;
 	for(uint16_t i = 0; i < 8;i++)
 	timestamp = (timestamp << 8) | *(rp3 + i);
 	set_base_time(timestamp);
@@ -355,7 +355,7 @@ void Send_Data(void) // 数据上送
 	  datatx[8] = codeid;
 	  datatx[9] = (peaklevel >> 8) & 0xFF;
 	  datatx[10] = peaklevel & 0xFF;
-	  uint64_t datatime = base_timestamp + peaktime - base_systick;
+	  time_t datatime = base_timestamp + peaktime - base_systick;
 	  for(uint16_t i = 0;i < 8;i++)
 		  datatx[i + 11] = (datatime >> (56 - 8 * i)) & 0xFF;
 	  uint16_t SUM = Checksum(&datatx[2], 17);
@@ -366,7 +366,7 @@ void Send_Data(void) // 数据上送
 	  UART_Send_Data(datatx, transmitlength);
 }
 
-void maintain_processing_buffer(void) //存储数据超过512字节且处理数据也超过512字节后前移512字节
+void maintain_processing_buffer(void) //存储数据超过512字节且处理数据也超过512字节后前移
 {
 	uint8_t *address = processing_buffer;
     if (wp - address > BUF_SIZE/2 && rp != processing_buffer)
@@ -401,6 +401,82 @@ void CMD_HANDLE_ERROR(CMD_Status cmdstate) //错误码发送
 	error_buffer[13] = tail & 0xFF;
 	uint16_t length = 14;
 	UART_Send_Data(error_buffer, length);
+}
+
+void GPS_message_process(uint8_t *time)
+{
+	while (wp > rp)
+	{
+		if(*rp == '$')
+		{
+			uint8_t str1[6] = "$GPRMC";
+			uint8_t str2[6] = "$GNRMC";
+			if(strncmp(rp, str1, 6) == 0 || strncmp(rp, str2, 6) == 0)
+			{
+				rp2 = rp + 6;
+				uint8_t str3[2] = ",,";
+				if(strncmp(rp2, str3, 2) == 0)
+					rp++;
+				else
+				{
+					volatile uint16_t count = 0;
+					rp1 = rp;
+					rp = wp;
+					memcpy(&time[6], rp1 + 7, 6);
+					memcpy(&time[12], rp1 + 14, 2);
+					while(rp1 < wp)
+					{
+						if(*rp1 == ',')
+							count++;
+						if(count == 9)
+							break;
+						rp1++;
+					}
+					memcpy(time, rp1 + 1, 6);
+				}
+			}
+			else
+				rp++;
+		}
+		else
+			rp++;
+	}
+	if(rp == wp)
+	{
+		data_ready = 0;
+		return;
+	}
+}
+
+int calculate(uint16_t *data)
+{
+    return data[0] * 10 + data[1];
+}
+
+time_t standard_to_stamp(uint8_t *time)
+{
+    struct tm stm;
+    int year, mon, mday, hour, min, sec, ms;
+    uint16_t number[14];
+    for(uint16_t i = 0;i < 14;i++)
+        number[i] = time[i] - '0';
+    year = calculate(&number[4]);
+    mon = calculate(&number[2]);
+    mday = calculate(&number[0]);
+    hour = calculate(&number[6]);
+    min = calculate(&number[8]);
+    sec = calculate(&number[10]);
+    ms = calculate(&number[12]);
+    memset(&stm, 0, sizeof(stm));
+    stm.tm_year = year + 100;
+    stm.tm_mon = mon - 1;
+    stm.tm_mday = mday;
+    stm.tm_hour = hour;
+    stm.tm_min = min;
+    stm.tm_sec = sec;
+    time_t systic = mktime(&stm);
+    systic = systic*1000000 + ms*10000;
+    return systic;
 }
 
 void UART_Queue_Init(void)

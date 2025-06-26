@@ -70,7 +70,7 @@ SD_Status SD_Init(void) //SD卡初始化
 	SD_PowerOnSeq();
 	SD_CS_LOW();
 
-	retry = 1000; // 设置超时值
+	retry = 100; // 设置超时值
 	do {
 	    r1 = SD_SendCmd(CMD0, 0, 0x95);
 	    retry--;

@@ -11,16 +11,18 @@
 #include "user_usart.h"
 
 void SystemClock_Config(void);
-static BYTE work[_MAX_SS];
-uint8_t rx_buffer[64];
+//static BYTE work[_MAX_SS];
+uint8_t rx_buffer[2048];
+uint8_t timing_buffer[2048];
 volatile uint16_t rx_length = 0;
 volatile uint16_t data_ready = 0;
 FATFS fs;
 FIL fil;
 UINT bw;
 uint8_t res = 0;
-uint8_t open = 0;
 SD_Config current_config;
+volatile uint8_t open = 0;
+volatile uint8_t timing = 0;
 
 int main(void)
 {
@@ -46,19 +48,28 @@ int main(void)
 		create_default_config();
 	int log_num = get_next_log_number();
 	snprintf(current_log_file, sizeof(current_log_file), "%s%05d.txt", LOG_PREFIX, log_num);
-	f_open(&fil, current_log_file, FA_CREATE_NEW | FA_WRITE);
+	if(f_open(&fil, current_log_file, FA_CREATE_NEW | FA_WRITE) == FR_OK)
+		open = 1;
 	current_config = load_and_apply_config();
   }
   HAL_UART_Receive_DMA(&huart1, rx_buffer, sizeof(rx_buffer));
   __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
-  ON_G();
+  ASIC_CMD(0x01, 250);
+  HAL_NVIC_SetPriority(EXTI4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
 
   while (1)
   {
-	  maintain_processing_buffer();
 	  if(data_ready)
 	  {
-		  CMD_Status state1 = CMD_Judge();
+		  time_t receive_time = get_current_systick();
+		  uint8_t time[14];
+		  GPS_message_process(time);
+		  time_t GPStime = standard_to_stamp(time);
+		  time_t process_time = get_current_systick();
+		  time_t timestamp = GPStime + process_time - receive_time;
+		  set_base_time(timestamp);
+		  /*CMD_Status state1 = CMD_Judge();
 		  if(state1 == CMD_OK)
 		  {
 			  CMD_Status state2 = CMD_Execute();
@@ -67,20 +78,36 @@ int main(void)
 		  }
 		  else if(state1 == CMD_END);
 		  else
-			  CMD_HANDLE_ERROR(state1);
+			  CMD_HANDLE_ERROR(state1);*/
+	  }
+	  else
+		  maintain_processing_buffer();
+	  if(timing == 1)
+	  {
+		  time_t timestamp = base_timestamp + 0xf4240;
+		  set_base_time(timestamp);
+		  timing = 0;
 	  }
 	  if(sampling_ready == 1)
 	  {
 		  if(ReadResult() == HAL_OK)
 		  {
 			  Send_Data();
-			  f_write(&fil, datatx, transmitlength, &bw);
-			  f_sync(&fil);
+			  if(open == 1)
+			  {
+				  f_write(&fil, datatx, transmitlength, &bw);
+				  f_sync(&fil);
+			  }
 		  }
 	  }
   }
 }
 
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	if(GPIO_Pin == PPS_Pin)
+		timing = 1;
+}
 
 int _write(int file, char *ptr, int len)
 {

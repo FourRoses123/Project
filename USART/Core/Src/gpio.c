@@ -78,11 +78,19 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : S2_Pin S1_Pin S3_Pin S4_Pin */
-  GPIO_InitStruct.Pin = S2_Pin|S1_Pin|S3_Pin|S4_Pin;
+  /*Configure GPIO pins : S2_Pin S1_Pin S3_Pin */
+  GPIO_InitStruct.Pin = S2_Pin|S1_Pin|S3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PPS_Pin */
+  GPIO_InitStruct.Pin = PPS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(PPS_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
 
 }
 
