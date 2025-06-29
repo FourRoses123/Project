@@ -1,0 +1,5 @@
+../Core/Src/sdconfig.c:5:9:read_config	640	static
+../Core/Src/sdconfig.c:18:11:parse_config	40	static
+../Core/Src/sdconfig.c:75:6:apply_config	16	static
+../Core/Src/sdconfig.c:84:6:create_default_config	624	static
+../Core/Src/sdconfig.c:104:11:load_and_apply_config	312	static

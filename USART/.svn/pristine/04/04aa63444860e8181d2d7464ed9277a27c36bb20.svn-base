@@ -1,0 +1,471 @@
+#include "user_usart.h"
+#include "user_spi.h"
+#include "usart.h"
+#include "sdconfig.h"
+#include "tim.h"
+
+volatile uint16_t ready = 1;
+volatile uint16_t heartstate = 0;
+volatile uint16_t checksum;
+volatile uint16_t tail;
+volatile uint32_t rxcode = 0x10001;
+volatile uint8_t frequency = 60;
+volatile uint16_t SUM;
+volatile uint8_t confidence;
+uint16_t cmd[cmd_number] = {0x0000, 0x0001, 0x0005, 0x0003, 0x0004, 0x0006};
+PACKAGE_TypeDef *package;
+PACKAGE_TypeDef *txpackage;
+volatile SystemTime_t sysTime;
+volatile uint16_t heartcount = 0;
+volatile uint16_t firmware = 0x0100;
+
+uint8_t daysInMonth(uint8_t month, uint16_t year);
+void incrementDate(void);
+void setTime(void);
+void sendCurrentTime(void);
+void Parameterset_query(void);
+void Sendheart(void);
+
+uint16_t read_be16(const uint8_t *data)
+{
+    return (data[0] << 8) | data[1];
+}
+uint16_t exchange(uint16_t *data) // 改为小端字节序
+{
+	uint8_t front = (*data) & 0xFF;
+	uint8_t back = (*data) >> 8;
+	uint16_t sum = (front << 8) | back;
+	return sum;
+}
+
+uint16_t Checksum(uint8_t *data, int16_t length) //逐字节校检和
+{
+	uint16_t sum;
+    if(length <= 1)
+    {
+    	sum = (uint16_t)data[0];
+    	return sum;
+    }
+    else
+    {
+    	sum = (uint16_t)data[length-1]+Checksum(data, length - 1);
+    	return sum;
+    }
+}
+
+void Receive_Data(uint8_t *rxdata, uint16_t rxlen) //将接收数据填入结构体
+{
+	package = (PACKAGE_TypeDef *)malloc(rxlen - 4);
+	package->head = read_be16(rxdata);
+	package->version = rxdata[2];
+	package->code = read_be16(&rxdata[3]);
+	package->command = read_be16(&rxdata[5]);
+	package->datalength = rxdata[7];
+	memcpy(package->data, &rxdata[8], package->datalength);
+	checksum = read_be16(&rxdata[8 + package->datalength]);
+	tail = read_be16(&rxdata[8 + package->datalength + 2]);
+	int16_t checklength = (int16_t)rxlen - 6; // 必须改为有符号16位，否则初始化时rxlength = 0导致checklength变为0xfffa，checksum函数运行错误
+	SUM = Checksum(&rxdata[2], checklength);
+}
+
+void Send_Data(uint8_t *rxdata, uint16_t length) //发送心跳和采样相关的应答命令
+{
+	for(uint16_t i = 0;i < length;i++)
+	{
+		if(i == 5)
+			tx_buffer[i] = 0x01;
+		else if(i == length - 3)
+			tx_buffer[i] = SUM & 0xFF;
+		else if(i == length - 4)
+		{
+			SUM = Checksum(&tx_buffer[2], i - 2);
+			tx_buffer[i] = (SUM >> 8) & 0xFF;
+		}
+		else
+			tx_buffer[i] = rxdata[i];
+	}
+	HAL_UART_Transmit_DMA(&huart1, tx_buffer, length);
+}
+
+CMD_Status CMD_Judge(uint8_t *rxdata, uint16_t rxlen) //判断发送数据格式正确与否，错误舍弃
+{
+	uint16_t i;
+	for(i = 0;i < cmd_number;i++)
+	{
+		if(package->command == cmd[i])
+		break;
+	}
+	uint8_t length = rxlen - sizeof(PACKAGE_TypeDef) - sizeof(SUM) - sizeof(tail);
+	if(package->command == HEAD) //包头不对，舍弃
+	{
+		printf("head error\n");
+		data_ready = 0;
+		return CMD_FORMAT_ERROR;
+	}
+	else if(i == cmd_number) //命令格式不对，舍弃
+	{
+		printf("not supported\n");
+		data_ready = 0;
+		return CMD_NOT_SUPPORTED;
+	}
+	else if(package->datalength != length) //数据长度不匹配，舍弃
+	{
+		printf("invalid\n");
+		data_ready = 0;
+		return CMD_INVALID_DATA;
+	}
+	else if(checksum != SUM) //校检不对，舍弃
+	{
+		printf("check error\n");
+		data_ready = 0;
+		return CMD_CHECK_ERROR;
+	}
+	else if(tail != TAIL) //包尾不对，舍弃
+	{
+		printf("tail error\n");
+		data_ready = 0;
+		return CMD_FORMAT_ERROR;
+	}
+	else
+		return CMD_OK;
+}
+
+CMD_Status CMD_Execute(uint8_t *rxdata, uint16_t rxlen) //根据命令部分数据实现对应内容
+{
+	uint32_t receivercode = (package->version << 16) | package->code;
+	if(receivercode != rxcode)
+	{
+		printf("receivercode error\n");
+		data_ready = 0;
+		return CMD_INVALID_DATA;
+	}
+	else
+	{
+		if(package->command == cmd1)
+		{
+			if(package->datalength == 0x01 && package->data[0] == 0x01)
+			{
+				Send_Data(rxdata, rxlen);
+				data_ready = 0;
+				return CMD_OK;
+			}
+			else if(package->datalength == 0x01 && package->data[0] == 0)
+			{
+				if(ready)
+				{
+					Send_Data(rxdata, rxlen);
+					HAL_Delay(100);
+					ready = 0;
+				}
+				codeid = 28;
+				peaktime = 1014438;
+				peaklevel = 218;
+				confidence = peaklevel;
+				double time = ((double)peaktime)/1000000;
+				uint8_t *ptr = tx_buffer;
+				ptr += sprintf(ptr, "%u,", codeid);
+				ptr += sprintf(ptr, "%u,", rxcode);
+				ptr += sprintf(ptr, "%u,", frequency);
+				ptr += sprintf(ptr, "%06f,", time);
+				ptr += sprintf(ptr, "%u\r\n", confidence);
+				HAL_UART_Transmit_DMA(&huart1, tx_buffer, ptr - tx_buffer);
+				HAL_Delay(1000);
+				return CMD_OK;
+			}
+			else
+			{
+				printf("invalid\n");
+				data_ready = 0;
+				return CMD_INVALID_DATA;
+			}
+		}
+		else if(package->command == cmd5)
+		{
+			setTime();
+			sendCurrentTime();
+			data_ready = 0;
+			return CMD_OK;
+		}
+		else if(package->command == cmd3)
+		{
+			Parameterset_query();
+			data_ready = 0;
+			return CMD_OK;
+		}
+		else if(package->command == cmd4)
+		{
+			if(package->datalength != 0x01 || package->data[0] != 0)
+			{
+				printf("invalid\n");
+				data_ready = 0;
+				return CMD_INVALID_DATA;
+			}
+			else
+			{
+				Parameterset_query();
+				data_ready = 0;
+				return CMD_OK;
+			}
+		}
+	}
+}
+
+/*void update_config_value(char *config_buf, const char *key, int new_value) //更新配置文件内容，目前存在最后一行的转行问题，待修改
+{
+    char *ptr = strstr(config_buf, key);
+    if (ptr == NULL)
+    {
+        return;
+    }
+    char *value_start = ptr + strlen(key);
+    char *line_end = value_start;
+    while (*line_end != '\0' && *line_end != '\n')
+    {
+        line_end++;
+    }
+    char new_line[256];
+    snprintf(new_line, sizeof(new_line), "%s%d", key, new_value);
+    size_t new_line_len = strlen(new_line);
+    size_t tail_len = strlen(line_end);
+    memmove(ptr + new_line_len, line_end, tail_len);
+    memcpy(ptr, new_line, new_line_len);
+}*/
+
+void Parameterset_query(void) //参数设置查询函数
+{
+	size_t txlen;
+	if(package->command == cmd3)
+	{
+		txlen = sizeof(PACKAGE_TypeDef) + 6;
+		txpackage = (PACKAGE_TypeDef *)malloc(txlen);
+		uint8_t version = package->data[0];
+		uint16_t code = read_be16(&(package->data[1]));
+		rxcode = (version << 16) | code;
+		PEAKTH = read_be16(&(package->data[3]));
+		ALMSTTH = read_be16(&(package->data[5]));
+		PKWND = read_be16(&(package->data[7]));
+		txpackage->version = version;
+		txpackage->code = exchange(&code);
+		txpackage->command = 0x0301;
+		txpackage->datalength = 0x06;
+		/*ASIC_CMD(0x01, PEAKTH);
+		ASIC_CMD(0x02, ALMSTTH);
+		ASIC_CMD(0x04, PKWND);
+		char config_buf[256];
+		FIL fil;
+		UINT bytes_written;
+		if(read_config(config_buf, sizeof(config_buf)) == FR_OK)
+		{
+			update_config_value(config_buf, "Receivercode=", rxcode);
+			update_config_value(config_buf, "Frequency=", frequency);
+			update_config_value(config_buf, "PEAKTH=", PEAKTH);
+			update_config_value(config_buf, "ALMSTTH=", ALMSTTH);
+			update_config_value(config_buf, "PKWND=", PKWND);
+		}
+		f_open(&fil, CONFIG_FILE, FA_OPEN_ALWAYS | FA_WRITE);
+		f_write(&fil, config_buf, strlen(config_buf), &bytes_written);
+		f_close(&fil);*/
+	}
+	else
+	{
+		ReadResult();
+		txlen = sizeof(PACKAGE_TypeDef) + 8;
+		txpackage = (PACKAGE_TypeDef *)malloc(txlen);
+		txpackage->version = package->version;
+		txpackage->code = exchange(&(package->code));
+		txpackage->command = 0x0401;
+		txpackage->datalength = 0x08;
+		uint16_t fm = exchange(&firmware);
+		memcpy(&(txpackage->data[6]), &fm, sizeof(fm));
+	}
+	txpackage->head = exchange(&(package->head));
+	uint16_t PEAKTHS = exchange(&PEAKTH);
+	uint16_t ALMSTTHS = exchange(&ALMSTTH);
+	uint16_t PKWNDS = exchange(&PKWND);
+	size_t length = 0;
+	memcpy(txpackage->data, &PEAKTHS, sizeof(PEAKTH));
+	length += sizeof(PEAKTH);
+	memcpy(&(txpackage->data[length]), &ALMSTTHS, sizeof(ALMSTTH));
+	length += sizeof(ALMSTTH);
+	memcpy(&(txpackage->data[length]), &PKWNDS, sizeof(PKWND));
+	length += sizeof(PKWND);
+	if(package->command == cmd4)
+		length += 2;
+	if(length != txpackage->datalength)
+	{
+		printf("handle error\n");
+		return CMD_FORMAT_ERROR;
+	}
+	memcpy(tx_buffer, txpackage, txlen);
+	int16_t checklength = (int16_t)txlen - 2;
+	SUM = Checksum(&tx_buffer[2], checklength);
+	uint16_t check = exchange(&SUM);
+	tail = exchange(&tail);
+	memcpy(&tx_buffer[txlen], &check, 2);
+	memcpy(&tx_buffer[txlen + 2], &tail, 2);
+	txlen += 4;
+	free(txpackage);
+	HAL_UART_Transmit_DMA(&huart1, tx_buffer, txlen);
+}
+
+void HAL_SYSTICK_Callback(void) // 计时器中断函数，每1ms进一次中断
+{
+    sysTime.millis++;
+    if (sysTime.millis >= 1000)
+    {
+        sysTime.millis = 0;
+        sysTime.second++;
+        if (sysTime.second >= 60)
+        {
+            sysTime.second = 0;
+            sysTime.minute++;
+            if (sysTime.minute >= 60)
+            {
+                sysTime.minute = 0;
+                sysTime.hour++;
+                if (sysTime.hour >= 24)
+                {
+                    sysTime.hour = 0;
+                    incrementDate();
+                }
+            }
+        }
+    }
+}
+
+void incrementDate(void) //计算年月
+{
+    uint8_t days_Month = daysInMonth(sysTime.month, sysTime.year);
+    sysTime.day++;
+    if (sysTime.day > days_Month)
+    {
+        sysTime.day = 1;
+        sysTime.month++;
+        if (sysTime.month > 12)
+        {
+            sysTime.month = 1;
+            sysTime.year = (sysTime.year + 1) % 100;
+        }
+    }
+}
+
+uint8_t daysInMonth(uint8_t month, uint16_t year) //计算天数，已考虑闰年
+{
+    const uint8_t days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    if (month == 2 && (year % 4 == 0 && year % 1000 != 0))
+    {
+        return 29;
+    }
+    return days[month-1];
+}
+
+void setTime(void)
+{
+	if(package->datalength != 0x07)
+		printf("invalid\n");
+	else
+	{
+		size_t length = sizeof(PACKAGE_TypeDef) + 1;
+		txpackage = (PACKAGE_TypeDef *)malloc(length);
+		__disable_irq();
+		sysTime.year = read_be16(package->data);
+		sysTime.month = package->data[2];
+		sysTime.day = package->data[3];
+		sysTime.hour = package->data[4];
+		sysTime.minute = package->data[5];
+		sysTime.second = package->data[6];
+		sysTime.millis = 0;
+		__enable_irq();
+		txpackage->head = exchange(&(package->head));
+		txpackage->version = package->version;
+		txpackage->code = exchange(&(package->code));
+		txpackage->command = 0x501;
+		txpackage->datalength = 0x01;
+		txpackage->data[0] = 0;
+		memcpy(tx_buffer,txpackage,length);
+		int16_t checklength = (int16_t)length - 2;
+		SUM = Checksum(&tx_buffer[2], checklength);
+		uint16_t check = exchange(&SUM);
+		tail = exchange(&tail);
+		memcpy(&tx_buffer[length], &check, 2);
+		memcpy(&tx_buffer[length + 2], &tail, 2);
+		length += 4;
+		HAL_UART_Transmit_DMA(&huart1, tx_buffer, length);
+		free(txpackage);
+	}
+}
+
+void sendCurrentTime(void)
+{
+    volatile SystemTime_t currentTime;
+    __disable_irq();
+    currentTime = sysTime;
+    currentTime.year = exchange(&(sysTime.year));
+    currentTime.millis = exchange(&(sysTime.millis));
+    __enable_irq();
+    size_t length = sizeof(PACKAGE_TypeDef) + 9;
+    txpackage = (PACKAGE_TypeDef *)malloc(length);
+    txpackage->head = exchange(&(package->head));
+	txpackage->version = package->version;
+	txpackage->code = exchange(&(package->code));
+	txpackage->command = 0x501;
+	txpackage->datalength = 0x09;
+	memcpy(&(txpackage->data),&currentTime,9);
+	memcpy(tx_buffer,txpackage,length);
+	int16_t checklength = (int16_t)length - 2;
+	SUM = Checksum(&tx_buffer[2], length);
+	uint16_t check = exchange(&SUM);
+	tail = exchange(&tail);
+	memcpy(&tx_buffer[length], &check, 2);
+	memcpy(&tx_buffer[length + 2], &tail, 2);
+	length += 4;
+    HAL_UART_Transmit_DMA(&huart1, tx_buffer, length);
+    free(txpackage);
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM6)
+	  heartcount++;
+  if(heartcount >= 2) //之后改成6，为30s一次
+  {
+	  Sendheart();
+	  heartcount = 0;
+  }
+}
+
+void Sendheart(void)
+{
+	  uint8_t hearttx[14];
+	  PACKAGE_TypeDef *heartpackage;
+	  uint32_t receivercode = rxcode;
+	  size_t length = sizeof(PACKAGE_TypeDef) + 2;
+	  heartpackage = (PACKAGE_TypeDef *)malloc(length);
+	  heartpackage->head = 0x55AA;
+	  heartpackage->version = (receivercode >> 16) & 0xFF;
+	  uint16_t code = receivercode & 0xFFFF;
+	  heartpackage->code = exchange(&code);
+	  heartpackage->command = 0x0001;
+	  heartpackage->datalength = 0x02;
+	  heartpackage->data[0] = 0;
+	  heartpackage->data[1] = 0;
+	  memcpy(hearttx,heartpackage,length);
+	  int16_t checklength = (int16_t)length - 2;
+	  uint16_t sum = Checksum(&hearttx[2], checklength);
+	  uint16_t check = exchange(&sum);
+	  uint16_t tailheart = 0xFE7E;
+	  memcpy(&hearttx[length], &check, 2);
+	  memcpy(&hearttx[length + 2], &tailheart, 2);
+	  length += 4;
+	  heartstate = 1;
+	  HAL_UART_Transmit_DMA(&huart1, hearttx, length);
+	  free(heartpackage);
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart->Instance == USART1)
+	{
+		heartstate = 1;
+	}
+}

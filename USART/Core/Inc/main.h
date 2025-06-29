@@ -14,11 +14,7 @@ extern "C" {
 #include "inttypes.h"
 #include "time.h"
 
-void Error_Handler(void);
-extern uint8_t rx_buffer[2048];
-extern volatile uint16_t rx_length;
-extern volatile uint16_t data_ready;
-extern volatile uint8_t timing;
+#define BUF_SIZE 2048
 
 #define LED_R_Pin GPIO_PIN_0
 #define LED_R_GPIO_Port GPIOA
@@ -46,7 +42,16 @@ extern volatile uint8_t timing;
 #define OFF_G()  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET) //绿灯灭
 #define Toggle_R() HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_0) //红灯反转
 #define Toggle_G() HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1) //绿灯反转
+
+void Error_Handler(void);
+extern uint8_t rx_buffer[BUF_SIZE];
+extern volatile uint16_t rx_length;
+extern volatile uint16_t data_ready;
+extern volatile uint8_t timing;
+extern volatile uint32_t timer_ms_count;
+
 int _write(int file, char *ptr, int len);
+void delay_ms_non_blocking(uint32_t ms);
 
 #ifdef __cplusplus
 }

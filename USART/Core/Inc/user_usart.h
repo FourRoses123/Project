@@ -3,7 +3,6 @@
 
 #include "main.h"
 
-#define BUF_SIZE 2048
 #define HEAD 0xAA55
 #define TAIL 0x7EFE
 #define cmd1 0x0001 //开始、停止采样
@@ -11,10 +10,10 @@
 #define cmd4 0x0004 //查询参数
 #define cmd5 0x0005 //对时
 #define cmd_number  4
-#define TX_QUEUE_SIZE 8 //队列最大数量
-#define MAX_PACKET_SIZE 1536 //单个队列发送的最大数据量
+#define TX_QUEUE_SIZE 128 //队列最大数量
+#define MAX_PACKET_SIZE 32 //单个队列发送的最大数据量
 
-extern uint8_t processing_buffer[BUF_SIZE];
+extern uint8_t processing_buffer[];
 extern uint8_t *wp;
 extern uint8_t *rp;
 extern volatile uint16_t receivercode;
@@ -25,6 +24,7 @@ extern volatile uint16_t samplingstate;
 extern uint16_t transmitlength;
 extern uint8_t datatx[];
 extern time_t base_timestamp;
+extern volatile uint64_t base_systick;
 
 typedef enum
 {
@@ -36,6 +36,12 @@ typedef enum
 	INVALID,
 	CMD_END,
 }CMD_Status;
+
+typedef enum
+{
+	Timing_OK = 0,
+	Timing_ERROR,
+}Timing_Status;
 
 typedef struct __attribute__((packed)){
     uint8_t data[MAX_PACKET_SIZE];
@@ -63,7 +69,7 @@ time_t get_current_systick(void);
 time_t get_current_timestamp(void);
 void UART_Queue_Init(void);
 time_t standard_to_stamp(uint8_t *time);
-void GPS_message_process(uint8_t *time);
+Timing_Status GPS_message_process(uint8_t *time);
 uint8_t UART_Send_Data(uint8_t *data, uint16_t len);
 
 #endif

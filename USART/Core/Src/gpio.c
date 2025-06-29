@@ -91,6 +91,7 @@ void MX_GPIO_Init(void)
   HAL_GPIO_Init(PPS_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI4_IRQn, 0, 0);
 
 }
 

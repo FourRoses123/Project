@@ -6,7 +6,7 @@ uint16_t ALMSTTH = 32;
 uint16_t PKWND = 5000;
 uint8_t codeid;
 uint16_t peaklevel;
-uint64_t peaktime;
+volatile uint64_t peaktime;
 uint8_t result[6];
 
 uint8_t ASIC_TransmitReceive(uint8_t data) //发送接收函数封装

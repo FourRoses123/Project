@@ -20,7 +20,7 @@ uint16_t firmware = 0x0100; //固件版本
 volatile uint16_t sampling_ready = 1; //采样标记
 volatile time_t high_counter = 0; //定时器为32位，高32位需由该变量保存
 time_t base_timestamp = 0; //记录基准时间戳的全局变量,本地时间
-time_t base_systick = 0; //记录设置时间基准时的定时器数据
+volatile uint64_t base_systick = 0; //记录设置时间基准时的定时器数据
 volatile uint8_t state = 0; //设备状态
 volatile uint8_t retransmit = 1; //是否重发
 uint16_t FREQ = 60; //频率
@@ -315,6 +315,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) //5s触发增加一�
 		  Sendheart();
 		  heartcount = 0;
 	  }
+	  if (htim->Instance == TIM7)
+	  {
+		  if (timer_ms_count > 0)
+			  timer_ms_count--;
+	  }
 }
 
 void Sendheart(void) //发送心跳
@@ -372,11 +377,11 @@ void maintain_processing_buffer(void) //存储数据超过512字节且处理数�
     if (wp - address > BUF_SIZE/2 && rp != processing_buffer)
     {
         uint16_t move_len = rp - processing_buffer;
-        __disable_irq();
+        __set_BASEPRI(1 << 4);
         memmove(processing_buffer, rp, move_len);
         wp = wp - move_len;
         rp = processing_buffer;
-        __enable_irq();
+        __set_BASEPRI(0);
     }
 }
 
@@ -403,7 +408,7 @@ void CMD_HANDLE_ERROR(CMD_Status cmdstate) //错误码发送
 	UART_Send_Data(error_buffer, length);
 }
 
-void GPS_message_process(uint8_t *time)
+Timing_Status GPS_message_process(uint8_t *time)
 {
 	while (wp > rp)
 	{
@@ -433,6 +438,8 @@ void GPS_message_process(uint8_t *time)
 						rp1++;
 					}
 					memcpy(time, rp1 + 1, 6);
+					data_ready = 0;
+					return Timing_OK;
 				}
 			}
 			else
@@ -441,11 +448,7 @@ void GPS_message_process(uint8_t *time)
 		else
 			rp++;
 	}
-	if(rp == wp)
-	{
-		data_ready = 0;
-		return;
-	}
+	return Timing_ERROR;
 }
 
 int calculate(uint16_t *data)
