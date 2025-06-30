@@ -333,7 +333,7 @@ void USART1_IRQHandler(void)
 	  __HAL_UART_CLEAR_IDLEFLAG(&huart1);
 	  HAL_UART_AbortReceive(&huart1);
 	  rx_length = sizeof(rx_buffer) - __HAL_DMA_GET_COUNTER(huart1.hdmarx);
-	  __disable_irq();
+	  __set_BASEPRI(1 << 4);
 	  if(rp != wp && wp + rx_length <= &processing_buffer[BUF_SIZE])
 	  {
 		  memcpy(wp, rx_buffer, rx_length);
@@ -345,9 +345,11 @@ void USART1_IRQHandler(void)
 		  rp = processing_buffer;
 		  wp = rp + rx_length;
 	  }
-	  __enable_irq();
+	  __set_BASEPRI(0);
 	  if(rx_length > 0)
+	  {
 		  data_ready = 1;
+	  }
 	  HAL_UART_Receive_DMA(&huart1, rx_buffer, sizeof(rx_buffer));
 	}
 }

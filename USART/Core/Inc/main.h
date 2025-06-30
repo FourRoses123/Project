@@ -49,6 +49,7 @@ extern volatile uint16_t rx_length;
 extern volatile uint16_t data_ready;
 extern volatile uint8_t timing;
 extern volatile uint32_t timer_ms_count;
+extern volatile uint8_t origin;
 
 int _write(int file, char *ptr, int len);
 void delay_ms_non_blocking(uint32_t ms);

@@ -11,7 +11,6 @@
 #include "user_usart.h"
 
 void SystemClock_Config(void);
-//static BYTE work[_MAX_SS];
 uint8_t rx_buffer[BUF_SIZE];
 volatile uint16_t rx_length = 0;
 volatile uint16_t data_ready = 0;
@@ -57,9 +56,9 @@ int main(void)
   }
   HAL_UART_Receive_DMA(&huart1, rx_buffer, sizeof(rx_buffer));
   __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
-  ON_G();
   ASIC_CMD(0x01, 250);
   receivercode = 0x0001;
+  ON_G();
 
   while (1)
   {
@@ -67,15 +66,13 @@ int main(void)
 	  {
 		  time_t receive_time = get_current_systick();
 		  uint8_t time[14];
-		  if(GPS_message_process(time) == Timing_ERROR)
-			  data_ready = 0;
-		  else
+		  Timing_Status res = GPS_message_process(time);
+		  if(origin == 1 && res == Timing_OK)
 		  {
 			  time_t GPStime = standard_to_stamp(time);
 			  time_t process_time = get_current_systick();
 			  time_t timestamp = GPStime + process_time - receive_time;
 			  set_base_time(timestamp);
-			  HAL_Delay(1000);
 			  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
 			  origin = 0;
 		  }
@@ -84,9 +81,9 @@ int main(void)
 		  maintain_processing_buffer();
 	  if(sampling_ready == 1)
 	  {
+	  	  delay_ms_non_blocking(500);
 		  if(ReadResult() == HAL_OK)
 		  {
-			  delay_ms_non_blocking(500);
 			  Send_Data();
 			  if(open == 1)
 			  {
@@ -105,7 +102,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 		__disable_irq();
 		time_t timestamp = base_timestamp + 0xf4240;
 		set_base_time(timestamp);
-		Toggle_R();
 		__enable_irq();
 	}
 }

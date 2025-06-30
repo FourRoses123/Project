@@ -10,8 +10,8 @@
 #define cmd4 0x0004 //查询参数
 #define cmd5 0x0005 //对时
 #define cmd_number  4
-#define TX_QUEUE_SIZE 128 //队列最大数量
-#define MAX_PACKET_SIZE 32 //单个队列发送的最大数据量
+#define TX_QUEUE_SIZE 32 //队列最大数量
+#define MAX_PACKET_SIZE 128 //单个队列发送的最大数据量
 
 extern uint8_t processing_buffer[];
 extern uint8_t *wp;
@@ -41,6 +41,7 @@ typedef enum
 {
 	Timing_OK = 0,
 	Timing_ERROR,
+	Timing_DONE,
 }Timing_Status;
 
 typedef struct __attribute__((packed)){

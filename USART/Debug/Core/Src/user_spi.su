@@ -1,4 +1,5 @@
-../Core/Src/user_spi.c:12:9:ASIC_TransmitReceive	32	static
-../Core/Src/user_spi.c:19:6:ASIC_CMD	16	static
-../Core/Src/user_spi.c:32:19:ReadResult	32	static
-../Core/Src/user_spi.c:54:6:ASIC_RST	8	static
+../Core/Src/user_spi.c:16:9:ASIC_TransmitReceive	32	static
+../Core/Src/user_spi.c:23:6:ASIC_CMD	16	static
+../Core/Src/user_spi.c:36:19:ReadResult	112	static
+../Core/Src/user_spi.c:63:6:ASIC_RST	8	static
+../Core/Src/user_spi.c:70:10:get_extended_peaktime	32	static
