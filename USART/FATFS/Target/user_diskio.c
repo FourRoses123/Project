@@ -119,39 +119,37 @@ DRESULT USER_write (
 
 #if _USE_IOCTL == 1
 DRESULT USER_ioctl (
-	BYTE pdrv,
-	BYTE cmd,
-	void *buff
+	BYTE pdrv,		/* 物理驱动器号 */
+	BYTE cmd,		/* 控制代码 */
+	void *buff		/* 发送/接收数据缓冲区指针 */
 )
 {
-	DRESULT res;
-	 switch(cmd)
-		{
-			case CTRL_SYNC:
-				SD_CS_LOW();
-				do{
-					HAL_Delay(20);
-				}while(SPI_TransmitReceive(0xFF)!=0xFF);
-				res=RES_OK;
-				SD_CS_HIGH();
-				break;
-			case GET_SECTOR_SIZE:
-				*(WORD*)buff = 512;
-				res = RES_OK;
-				break;
-			case GET_BLOCK_SIZE:
-				*(WORD*)buff = 8;
-				res = RES_OK;
-				break;
-			case GET_SECTOR_COUNT:
-				*(DWORD*)buff = SD_GetSectorCount();
-				res = RES_OK;
-				break;
-			default:
-				res = RES_PARERR;
-				break;
-		}
-		return res;
+	DRESULT res = RES_ERROR;
+	DWORD *p_dw = (DWORD*)buff;
+	if (pdrv) return RES_PARERR;
+
+	switch (cmd) {
+		case CTRL_SYNC :
+			res = RES_OK;
+			break;
+		case GET_SECTOR_COUNT :
+			*p_dw = SD_GetSectorCount();
+			res = RES_OK;
+			break;
+		case GET_SECTOR_SIZE :
+			*(WORD*)buff = 512;
+			res = RES_OK;
+			break;
+		case GET_BLOCK_SIZE :
+			*(DWORD*)buff = 1;
+			res = RES_OK;
+			break;
+		default:
+			res = RES_PARERR;
+			break;
+	}
+
+	return res;
 }
 #endif
 

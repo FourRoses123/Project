@@ -1,5 +1,0 @@
-../Core/Src/user_spi.c:12:9:ASIC_TransmitReceive	1
-../Core/Src/user_spi.c:19:19:ASIC_CMD	4
-../Core/Src/user_spi.c:46:19:ReadResult	2
-../Core/Src/user_spi.c:69:6:ASIC_RST	1
-../Core/Src/user_spi.c:77:5:_write	1

@@ -5,35 +5,44 @@
 #include "sdconfig.h"
 #include "tim.h"
 
-uint8_t processing_buffer[BUF_SIZE]; //用于处理接收数据的数组
-uint8_t *wp = processing_buffer; //写指针，指向接收数据的末尾
-uint8_t *rp = processing_buffer; //读指针
+uint8_t processing_buffer[HANDLE_SIZE]; //用于处理接收数据的数组
+volatile uint8_t *wp = processing_buffer; //写指针，指向接收数据的末尾
+volatile uint8_t *rp = processing_buffer; //读指针
 uint8_t version = 0x01;
 volatile uint16_t receivercode = 0x0001; //接收机编码
 uint16_t cmd[cmd_number] = {0x0001, 0x0003, 0x0004, 0x0005};
 uint16_t command; //记录命令码的全局变量
-uint8_t *rp1; //在运行过程中将指向包头第一个字节
-uint8_t *rp2; //在运行过程中将指向包尾第一个字节
-uint8_t *rp3; //在运行过程中将指向数据第一个字节
+volatile uint8_t *rp1 = NULL;
+volatile uint8_t *rp2 = NULL;
+volatile uint8_t *rp3 = NULL;
 uint8_t datalength; //记录数据包中数据部分长度的全局变量
 uint16_t firmware = 0x0100; //固件版本
 volatile uint16_t sampling_ready = 1; //采样标记
-volatile time_t high_counter = 0; //定时器为32位，高32位需由该变量保存
+volatile uint64_t high_counter = 0; //定时器为32位，高32位需由该变量保存
 time_t base_timestamp = 0; //记录基准时间戳的全局变量,本地时间
-volatile uint64_t base_systick = 0; //记录设置时间基准时的定时器数据
+uint64_t base_systick = 0; //记录设置时间基准时的定时器数据
 volatile uint8_t state = 0; //设备状态
 volatile uint8_t retransmit = 1; //是否重发
 uint16_t FREQ = 60; //频率
 volatile uint16_t heartcount = 0;
 uint16_t transmitlength = 23;
 uint8_t datatx[23];
-static UART_Queue txQueue;
-static uint8_t hearttx[14];
+volatile uint8_t first_time2_irq = 1;
+volatile uint16_t GPS_count = 5;
+volatile uint8_t ASIC_count = 0;
+uint8_t GPS_buffer[128];
+uint16_t GPSlen;
+UART_Queue txQueue_GPS;    // 用于GPS（低优先级）
+UART_Queue txQueue_HEART; // 用于心跳（中优先级）
+UART_Queue txQueue_DATA;
+static volatile uint32_t last_sent_timestamp[PACKET_TYPE_COUNT] = {0};
+static volatile UART_Queue* current_sending_queue = NULL;
+
+
 void Sampling(void);
 void Send_time(void);
 void Parameterset_query(void);
 void Sendheart(void);
-uint8_t UART_Send_Data(uint8_t* data, uint16_t len);
 void UART_Start_Send(void);
 
 uint16_t read_be16(uint8_t *data) //连续读取两个字节
@@ -164,12 +173,11 @@ void Sampling(void) //发送采样相关的应答命令
 		else
 			samplingtx[i] = *(rp1 + i);
 	}
-	UART_Send_Data(samplingtx, length);
 }
 
 void Parameterset_query(void) //参数设置查询函数
 {
-	uint8_t tx_buffer[32];
+	uint8_t parameter[32];
 	uint16_t SUM;
 	if(command == cmd3)
 	{
@@ -195,64 +203,63 @@ void Parameterset_query(void) //参数设置查询函数
 			f_write(&fil, config_buf, strlen(config_buf), &bytes_written);
 			f_close(&fil);
 		}
-		tx_buffer[rp3 - rp1 + 8] = 0x7E;
-		tx_buffer[rp3 - rp1 + 9] = 0xFE;
+		parameter[rp3 - rp1 + 8] = 0x7E;
+		parameter[rp3 - rp1 + 9] = 0xFE;
 	}
 	else
 	{
 		ReadResult();
-		tx_buffer[rp3 - rp1 + 6] = (FREQ >> 8) & 0xFF;
-		tx_buffer[rp3 - rp1 + 7] = FREQ & 0xFF;
-		tx_buffer[rp3 - rp1 + 8] = (firmware >> 8) & 0xFF;
-		tx_buffer[rp3 - rp1 + 9] = firmware & 0xFF;
-		tx_buffer[rp3 - rp1 + 12] = 0x7E;
-		tx_buffer[rp3 - rp1 + 13] = 0xFE;
+		parameter[rp3 - rp1 + 6] = (FREQ >> 8) & 0xFF;
+		parameter[rp3 - rp1 + 7] = FREQ & 0xFF;
+		parameter[rp3 - rp1 + 8] = (firmware >> 8) & 0xFF;
+		parameter[rp3 - rp1 + 9] = firmware & 0xFF;
+		parameter[rp3 - rp1 + 12] = 0x7E;
+		parameter[rp3 - rp1 + 13] = 0xFE;
 	}
 	for(uint16_t i = 0;i < rp3 - rp1 + 6;i++)
 	{
 		if(i < rp3 - rp1)
-			tx_buffer[i] = *(rp1 + i);
+			parameter[i] = *(rp1 + i);
 		if(command == cmd3)
 		{
 			if(i >= 3 && i <= 4)
-				tx_buffer[i] = *(rp3 + i - 3);
+				parameter[i] = *(rp3 + i - 3);
 			if(i == 7)
-				tx_buffer[i] = 0x06;
+				parameter[i] = 0x06;
 		}
 		if(command == cmd4 && i == 7)
-			tx_buffer[i] = 0x0A;
+			parameter[i] = 0x0A;
 		if(i == 5)
-			tx_buffer[i] = 0x01;
+			parameter[i] = 0x01;
 		if(i == rp3 - rp1)
 		{
-			tx_buffer[i] = (PEAKTH >> 8) & 0xFF;
-			tx_buffer[i + 1] = PEAKTH & 0xFF;
+			parameter[i] = (PEAKTH >> 8) & 0xFF;
+			parameter[i + 1] = PEAKTH & 0xFF;
 		}
 		if(i == rp3 - rp1 + 2)
 		{
-			tx_buffer[i] = (ALMSTTH >> 8) & 0xFF;
-			tx_buffer[i + 1] = ALMSTTH & 0xFF;
+			parameter[i] = (ALMSTTH >> 8) & 0xFF;
+			parameter[i + 1] = ALMSTTH & 0xFF;
 		}
 		if(i == rp3 - rp1 + 4)
 		{
-			tx_buffer[i] = (PKWND >> 8) & 0xFF;
-			tx_buffer[i + 1] = PKWND & 0xFF;
+			parameter[i] = (PKWND >> 8) & 0xFF;
+			parameter[i + 1] = PKWND & 0xFF;
 		}
 	}
-	size_t txlen = 12 + tx_buffer[7];
-	size_t checklength = 6 + tx_buffer[7];
-	SUM = Checksum(&tx_buffer[2], checklength);
+	size_t txlen = 12 + parameter[7];
+	size_t checklength = 6 + parameter[7];
+	SUM = Checksum(&parameter[2], checklength);
 	if(command == 3)
 	{
-		tx_buffer[rp3 - rp1 + 6] = (SUM >> 8) & 0xFF;
-		tx_buffer[rp3 - rp1 + 7] = SUM & 0xFF;
+		parameter[rp3 - rp1 + 6] = (SUM >> 8) & 0xFF;
+		parameter[rp3 - rp1 + 7] = SUM & 0xFF;
 	}
 	else
 	{
-		tx_buffer[rp3 - rp1 + 10] = (SUM >> 8) & 0xFF;
-		tx_buffer[rp3 - rp1 + 11] = SUM & 0xFF;
+		parameter[rp3 - rp1 + 10] = (SUM >> 8) & 0xFF;
+		parameter[rp3 - rp1 + 11] = SUM & 0xFF;
 	}
-	UART_Send_Data(tx_buffer, txlen);
 }
 
 time_t get_current_systick(void) //获取当前系统计时 (µs)
@@ -302,11 +309,17 @@ void Send_time(void) // 校时
 	uint16_t tail = TAIL;
 	time_buffer[rp3 - rp1 + 10] = (tail >> 8) & 0xFF;
 	time_buffer[rp3 - rp1 + 11] = tail & 0xFF;
-	UART_Send_Data(time_buffer, txlen);
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) //5s触发增加一次heartcount记数，每30s发送一次心跳
 {
+	  if (htim->Instance == TIM2)
+	  {
+		  if (first_time2_irq)
+			first_time2_irq = 0;
+		  else
+			high_counter += 0x100000000;
+	  }
 	  if (htim->Instance == TIM6)
 		  heartcount++;
 	  if(heartcount >= 6)
@@ -323,6 +336,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) //5s触发增加一�
 
 void Sendheart(void) //发送心跳
 {
+	  static uint8_t hearttx[14];
 	  uint16_t length = 14;
 	  uint16_t head = HEAD;
 	  uint16_t tail = TAIL;
@@ -341,7 +355,7 @@ void Sendheart(void) //发送心跳
 	  hearttx[11] = SUM & 0xFF;
 	  hearttx[12] = (tail >> 8) & 0xFF;
 	  hearttx[13] = tail & 0xFF;
-	  UART_Send_Data(hearttx, length);
+	  UART_Enqueue_Packet(hearttx, length, 0, PACKET_TYPE_HEART);
 }
 
 void Send_Data(void) // 数据上送
@@ -362,18 +376,27 @@ void Send_Data(void) // 数据上送
 	  time_t datatime = base_timestamp + peaktime - base_systick;
 	  for(uint16_t i = 0;i < 8;i++)
 		  datatx[i + 11] = (datatime >> (56 - 8 * i)) & 0xFF;
+	  /*uint32_t a, b, c, d, e, f;
+	  a = (base_timestamp >> 32) & 0xFFFFFFFF;
+	  b = base_timestamp & 0xFFFFFFFF;
+	  c = (peaktime >> 32) & 0xFFFFFFFF;
+	  d = peaktime & 0xFFFFFFFF;
+	  e = (base_systick >> 32) & 0xFFFFFFFF;
+	  f = base_systick & 0xFFFFFFFF;
+	  int32_t min = peaktime - base_systick;
+	  printf("base_timestamp = %lu-%lu, peaktime = %lu, base_systick = %lu, %ld\n", a, b, d, f, min);*/
 	  uint16_t SUM = Checksum(&datatx[2], 17);
 	  datatx[19] = (SUM >> 8) & 0xFF;
 	  datatx[20] = SUM & 0xFF;
 	  datatx[21] = (tail >> 8) & 0xFF;
 	  datatx[22] = tail & 0xFF;
-	  UART_Send_Data(datatx, transmitlength);
+	  UART_Enqueue_Packet(datatx, transmitlength, 1000, PACKET_TYPE_DATATX);
 }
 
 void maintain_processing_buffer(void) //存储数据超过1024字节且处理数据也超过1024字节后前移
 {
 	uint8_t *address = processing_buffer;
-    if (wp - address > BUF_SIZE/2 && rp != wp)
+    if (wp - address > BUF_SIZE/2 && rp != processing_buffer)
     {
         uint16_t move_len = rp - processing_buffer;
         __set_BASEPRI(1 << 4);
@@ -405,84 +428,85 @@ void CMD_HANDLE_ERROR(CMD_Status cmdstate) //错误码发送
 	error_buffer[12] = (tail >> 8) & 0xFF;
 	error_buffer[13] = tail & 0xFF;
 	uint16_t length = 14;
-	UART_Send_Data(error_buffer, length);
 }
 
 Timing_Status GPS_message_process(uint8_t *time)
 {
 	while (wp > rp)
 	{
-		if(*rp == '$')
+		uint8_t* end_of_line = memchr(rp, '\n', wp - rp);
+		if (end_of_line == NULL)
+			return Timing_ERROR;
+		uint8_t* start_of_line = rp;
+		uint16_t line_len = end_of_line - start_of_line;
+		rp = end_of_line + 1;
+		uint8_t* dollar_sign = memchr(start_of_line, '$', line_len);
+		if (dollar_sign == NULL)
 		{
-			uint8_t str1[6] = "$GPRMC";
-			uint8_t str2[6] = "$GNRMC";
-			if(strncmp(rp, str1, 6) == 0 || strncmp(rp, str2, 6) == 0)
+			rp = end_of_line + 1;
+			continue;
+		}
+		uint8_t str1[] = "$GPRMC";
+		uint8_t str2[] = "$GNRMC";
+		if(strncmp(dollar_sign, str1, 6) == 0 || strncmp(dollar_sign, str2, 6) == 0)
+		{
+			uint8_t* p = dollar_sign;
+			int comma_count = 0;
+			while (p < end_of_line && comma_count < 2)
 			{
-				rp2 = rp + 6;
-				uint8_t str3[2] = ",,";
-				if(strncmp(rp2, str3, 2) == 0)
-					rp++;
-				else
+				if (*p == ',')
+					comma_count++;
+				p++;
+			}
+			if(GPS_count >= 5)
+			{
+				GPSlen = end_of_line - dollar_sign + 1;
+				uint16_t head = HEAD;
+				uint16_t tail = TAIL;
+				GPS_buffer[0] = (head >> 8) & 0xFF;
+				GPS_buffer[1] = head & 0xFF;
+				GPS_buffer[2] = version;
+				GPS_buffer[3] = (receivercode >> 8) & 0xFF;
+				GPS_buffer[4] = receivercode & 0xFF;
+				GPS_buffer[5] = 0x01;
+				GPS_buffer[6] = 0x06;
+				GPS_buffer[7] = GPSlen;
+				memcpy(&GPS_buffer[8], dollar_sign, GPSlen);
+				uint16_t SUM = Checksum(&GPS_buffer[2], GPSlen + 6);
+				GPS_buffer[8 + GPSlen] = (SUM >> 8) & 0xFF;
+				GPS_buffer[9 + GPSlen] = SUM & 0xFF;
+				GPS_buffer[10 + GPSlen] = (tail >> 8) & 0xFF;
+				GPS_buffer[11 + GPSlen] = tail & 0xFF;
+				GPSlen += 12;
+				UART_Enqueue_Packet(GPS_buffer, GPSlen, 0, PACKET_TYPE_GPS);
+				GPS_count = 0;
+			}
+			if(timing == 11)
+				return Timing_DONE;
+			if(timing == 10 || GPS_timing_count == 60)
+			{
+				if (comma_count == 2 && p < end_of_line && *p == 'A')
 				{
-					rp1 = rp;
-					break;
+					volatile uint16_t count = 0;
+					memcpy(&time[6], dollar_sign + 7, 6);
+					memcpy(&time[12], dollar_sign + 14, 2);
+					uint8_t* date_ptr = dollar_sign;
+					while(date_ptr < end_of_line)
+					{
+						if(*date_ptr == ',')
+							count++;
+						if(count == 9)
+							break;
+						date_ptr++;
+					}
+					if (count == 9)
+						memcpy(time, date_ptr + 1, 6);
+					return Timing_OK;
 				}
 			}
-			else
-				rp++;
-		}
-		else
-			rp++;
-	}
-	if(rp == wp)
-	{
-		data_ready = 0;
-		return Timing_ERROR;
-	}
-	else
-	{
-		while(*rp != '\n')
-			rp++;
-		rp2 = rp;
-		uint16_t len = rp2 - rp1 + 1;
-		uint8_t GPS_buffer[128];
-		uint16_t head = HEAD;
-		uint16_t tail = TAIL;
-		GPS_buffer[0] = (head >> 8) & 0xFF;
-		GPS_buffer[1] = head & 0xFF;
-		GPS_buffer[2] = version;
-		GPS_buffer[3] = (receivercode >> 8) & 0xFF;
-		GPS_buffer[4] = receivercode & 0xFF;
-		GPS_buffer[5] = 0x01;
-		GPS_buffer[6] = 0x06;
-		GPS_buffer[7] = len;
-		memcpy(&GPS_buffer[8], rp1, len);
-		uint16_t SUM = Checksum(&GPS_buffer[2], len + 6);
-		GPS_buffer[8 + len] = (SUM >> 8) & 0xFF;
-		GPS_buffer[9 + len] = SUM & 0xFF;
-		GPS_buffer[10 + len] = (tail >> 8) & 0xFF;
-		GPS_buffer[11 + len] = tail & 0xFF;
-		UART_Send_Data(GPS_buffer, len + 12);
-		if(origin == 0)
-			return Timing_DONE;
-		else
-		{
-			volatile uint16_t count = 0;
-			memcpy(&time[6], rp1 + 7, 6);
-			memcpy(&time[12], rp1 + 14, 2);
-			while(rp1 < wp)
-			{
-				if(*rp1 == ',')
-					count++;
-				if(count == 9)
-					break;
-				rp1++;
-			}
-			memcpy(time, rp1 + 1, 6);
-			data_ready = 0;
-			return Timing_OK;
 		}
 	}
+	return Timing_ERROR;
 }
 
 int calculate(uint16_t *data)
@@ -516,51 +540,120 @@ time_t standard_to_stamp(uint8_t *time)
     return systic;
 }
 
-void UART_Queue_Init(void)
+static uint8_t* UART_Get_Packet_Data_Ptr(UART_Packet* pkt)
 {
-    txQueue.head = 0;
-    txQueue.tail = 0;
-    txQueue.count = 0;
-    txQueue.isSending = 0;
+    if (pkt == NULL)
+        return NULL;
+    switch (pkt->type)
+    {
+        case PACKET_TYPE_GPS:    return pkt->data_buffer.gps_data;
+        case PACKET_TYPE_DATATX: return pkt->data_buffer.datatx_data;
+        case PACKET_TYPE_HEART:  return pkt->data_buffer.heart_data;
+        default:                 return NULL;
+    }
 }
 
-uint8_t UART_Send_Data(uint8_t *data, uint16_t len)// 数据入队
+void UART_Queue_Init(void)
 {
-    if(len == 0 || len > MAX_PACKET_SIZE || txQueue.count >= TX_QUEUE_SIZE)
+    memset(&txQueue_GPS, 0, sizeof(UART_Queue));
+    memset(&txQueue_HEART, 0, sizeof(UART_Queue));
+    memset(&txQueue_DATA, 0, sizeof(UART_Queue));
+    current_sending_queue = NULL;
+    for(int i = 0; i < PACKET_TYPE_COUNT; i++)
+        last_sent_timestamp[i] = 0;
+}
+
+
+uint8_t UART_Enqueue_Packet(uint8_t *data, uint16_t len, uint32_t min_interval, UART_Packet_Type type)
+{
+    if(data == NULL || len == 0 || type >= PACKET_TYPE_COUNT)
+        return 0;
+    UART_Queue* target_queue = NULL;
+    uint16_t max_len = 0;
+    switch(type)
+    {
+        case PACKET_TYPE_HEART:
+            target_queue = &txQueue_HEART;
+            max_len = HEART_PACKET_MAX_SIZE;
+            break;
+        case PACKET_TYPE_GPS:
+            target_queue = &txQueue_GPS;
+            max_len = GPS_PACKET_MAX_SIZE;
+            break;
+        case PACKET_TYPE_DATATX:
+            target_queue = &txQueue_DATA;
+            max_len = DATATX_PACKET_MAX_SIZE;
+            break;
+        default:
+            return 0;
+    }
+    if (len > max_len || target_queue->count >= TX_QUEUE_SIZE)
         return 0;
     __set_BASEPRI(1 << 4);
-    UART_Packet *pkt = &txQueue.packets[txQueue.tail];
-    memcpy(pkt->data, data, len);
+    UART_Packet *pkt = &target_queue->packets[target_queue->tail];
+    target_queue->tail = (target_queue->tail + 1) % TX_QUEUE_SIZE;
+    target_queue->count++;
+    uint8_t* dest_buffer = UART_Get_Packet_Data_Ptr(pkt);
+    memcpy(dest_buffer, data, len);
     pkt->length = len;
-    txQueue.tail = (txQueue.tail + 1) % TX_QUEUE_SIZE;
-    txQueue.count++;
+    pkt->min_interval_ms = min_interval;
+    pkt->type = type;
     __set_BASEPRI(0);
-    if(!txQueue.isSending)
-    {
-        txQueue.isSending = 1;
-        UART_Start_Send();
-    }
     return 1;
 }
 
-void UART_Start_Send(void) // 启动DMA发送
+void UART_Process_Send_Queue(void)
 {
-    if(txQueue.count == 0)
-    {
-        txQueue.isSending = 0;
+    if (current_sending_queue != NULL)
         return;
+    UART_Queue* queue_to_process = NULL;
+    if (txQueue_DATA.count > 0)
+    {
+        UART_Packet *pkt = &txQueue_DATA.packets[txQueue_DATA.head];
+        if ((last_sent_timestamp[pkt->type] == 0) || (HAL_GetTick() - last_sent_timestamp[pkt->type] >= pkt->min_interval_ms))
+            queue_to_process = &txQueue_DATA;
     }
-    UART_Packet *pkt = &txQueue.packets[txQueue.head];
-    HAL_UART_Transmit_DMA(&huart1, pkt->data, pkt->length);
+    if (queue_to_process == NULL && txQueue_HEART.count > 0)
+    {
+        UART_Packet *pkt = &txQueue_HEART.packets[txQueue_HEART.head];
+        if ((last_sent_timestamp[pkt->type] == 0) || (HAL_GetTick() - last_sent_timestamp[pkt->type] >= pkt->min_interval_ms))
+            queue_to_process = &txQueue_HEART;
+    }
+    if (queue_to_process == NULL && txQueue_GPS.count > 0)
+    {
+        UART_Packet *pkt = &txQueue_GPS.packets[txQueue_GPS.head];
+        if ((last_sent_timestamp[pkt->type] == 0) || (HAL_GetTick() - last_sent_timestamp[pkt->type] >= pkt->min_interval_ms))
+            queue_to_process = &txQueue_GPS;
+    }
+    if (queue_to_process != NULL)
+    {
+        current_sending_queue = queue_to_process;
+        UART_Packet *pkt_to_send = &current_sending_queue->packets[current_sending_queue->head];
+        uint8_t* data_ptr = UART_Get_Packet_Data_Ptr(pkt_to_send);
+        if (data_ptr != NULL)
+            HAL_UART_Transmit_DMA(&huart1, data_ptr, pkt_to_send->length);
+        else
+        {
+            __set_BASEPRI(1 << 4);
+            current_sending_queue->head = (current_sending_queue->head + 1) % TX_QUEUE_SIZE;
+            current_sending_queue->count--;
+            current_sending_queue = NULL;
+            __set_BASEPRI(0);
+        }
+    }
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
-    if(huart->Instance != USART1)
-    	return;
+    if(huart->Instance != USART1 || current_sending_queue == NULL)
+        return;
     __set_BASEPRI(1 << 4);
-    txQueue.head = (txQueue.head + 1) % TX_QUEUE_SIZE;
-    txQueue.count--;
+    UART_Packet *sent_pkt = &current_sending_queue->packets[current_sending_queue->head];
+    UART_Packet_Type sent_type = sent_pkt->type;
+
+    last_sent_timestamp[sent_type] = HAL_GetTick();
+    current_sending_queue->head = (current_sending_queue->head + 1) % TX_QUEUE_SIZE;
+    current_sending_queue->count--;
+    current_sending_queue = NULL;
     __set_BASEPRI(0);
-    UART_Start_Send();
 }

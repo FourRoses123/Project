@@ -15,6 +15,7 @@ extern "C" {
 #include "time.h"
 
 #define BUF_SIZE 2048
+#define HANDLE_SIZE 4096
 
 #define LED_R_Pin GPIO_PIN_0
 #define LED_R_GPIO_Port GPIOA
@@ -49,10 +50,11 @@ extern volatile uint16_t rx_length;
 extern volatile uint16_t data_ready;
 extern volatile uint8_t timing;
 extern volatile uint32_t timer_ms_count;
-extern volatile uint8_t origin;
+extern volatile uint8_t timing;
+extern volatile uint16_t GPS_timing_count;
 
 int _write(int file, char *ptr, int len);
-void delay_ms_non_blocking(uint32_t ms);
+void delay_ms_blocking(uint32_t ms);
 
 #ifdef __cplusplus
 }

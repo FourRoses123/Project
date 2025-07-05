@@ -1,5 +1,0 @@
-../Core/Src/sdconfig.c:5:9:read_config	2
-../Core/Src/sdconfig.c:18:11:parse_config	13
-../Core/Src/sdconfig.c:75:6:apply_config	1
-../Core/Src/sdconfig.c:84:6:create_default_config	2
-../Core/Src/sdconfig.c:104:11:load_and_apply_config	2

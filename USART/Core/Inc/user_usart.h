@@ -10,24 +10,13 @@
 #define cmd4 0x0004 //查询参数
 #define cmd5 0x0005 //对时
 #define cmd_number  4
-#define TX_QUEUE_SIZE 32 //队列最大数量
-#define MAX_PACKET_SIZE 128 //单个队列发送的最大数据量
+#define GPS_PACKET_MAX_SIZE      128  // GPS数据包较长
+#define DATATX_PACKET_MAX_SIZE   32   // DATA数据包较短
+#define HEART_PACKET_MAX_SIZE    16   // 心跳包非常短
+#define TX_QUEUE_SIZE            64   // 队列中可容纳的数据包数量
 
-extern uint8_t processing_buffer[];
-extern uint8_t *wp;
-extern uint8_t *rp;
-extern volatile uint16_t receivercode;
-extern volatile time_t high_counter;
-extern volatile uint16_t sampling_ready;
-extern volatile uint16_t txstate;
-extern volatile uint16_t samplingstate;
-extern uint16_t transmitlength;
-extern uint8_t datatx[];
-extern time_t base_timestamp;
-extern volatile uint64_t base_systick;
 
-typedef enum
-{
+typedef enum{
 	CMD_OK = 0,
 	CODE_ERROE,
 	LENGTH_ERROE,
@@ -37,16 +26,28 @@ typedef enum
 	CMD_END,
 }CMD_Status;
 
-typedef enum
-{
+typedef enum{
 	Timing_OK = 0,
 	Timing_ERROR,
 	Timing_DONE,
 }Timing_Status;
 
+typedef enum {
+    PACKET_TYPE_GPS,
+    PACKET_TYPE_DATATX,
+    PACKET_TYPE_HEART,
+    PACKET_TYPE_COUNT
+} UART_Packet_Type;
+
 typedef struct __attribute__((packed)){
-    uint8_t data[MAX_PACKET_SIZE];
+    union {
+        uint8_t gps_data[GPS_PACKET_MAX_SIZE];
+        uint8_t datatx_data[DATATX_PACKET_MAX_SIZE];
+        uint8_t heart_data[HEART_PACKET_MAX_SIZE];
+    } data_buffer;
     uint16_t length;
+    uint32_t min_interval_ms;
+    UART_Packet_Type type;
 } UART_Packet;
 
 typedef struct {
@@ -54,8 +55,20 @@ typedef struct {
     uint16_t head;
     uint16_t tail;
     uint8_t count;
-    uint8_t isSending;
 } UART_Queue;
+
+extern uint8_t processing_buffer[];
+extern volatile uint8_t *wp;
+extern volatile uint8_t *rp;
+extern volatile uint16_t receivercode;
+extern volatile uint16_t sampling_ready;
+extern volatile uint16_t txstate;
+extern volatile uint16_t samplingstate;
+extern uint16_t transmitlength;
+extern uint8_t datatx[23];
+extern time_t base_timestamp;
+extern uint64_t base_systick;
+extern volatile uint16_t GPS_count;
 
 CMD_Status CMD_Judge(void);
 CMD_Status CMD_Execute(void);
@@ -63,14 +76,15 @@ void Send_Data(void);
 void heartreply(void);
 void datareply(void);
 void maintain_processing_buffer(void);
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart);
 void CMD_HANDLE_ERROR(CMD_Status state);
 void set_base_time(time_t timestamp);
 time_t get_current_systick(void);
 time_t get_current_timestamp(void);
-void UART_Queue_Init(void);
 time_t standard_to_stamp(uint8_t *time);
 Timing_Status GPS_message_process(uint8_t *time);
-uint8_t UART_Send_Data(uint8_t *data, uint16_t len);
+void Sendheart(void);
+void UART_Queue_Init(void);
+uint8_t UART_Enqueue_Packet(uint8_t *data, uint16_t len, uint32_t min_interval, UART_Packet_Type type);
+void UART_Process_Send_Queue(void);
 
 #endif
