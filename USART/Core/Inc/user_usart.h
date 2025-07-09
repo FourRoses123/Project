@@ -10,11 +10,8 @@
 #define cmd4 0x0004 //查询参数
 #define cmd5 0x0005 //对时
 #define cmd_number  4
-#define GPS_PACKET_MAX_SIZE      128  // GPS数据包较长
-#define DATATX_PACKET_MAX_SIZE   32   // DATA数据包较短
-#define HEART_PACKET_MAX_SIZE    16   // 心跳包非常短
-#define TX_QUEUE_SIZE            64   // 队列中可容纳的数据包数量
-
+#define TX_QUEUE_SIZE 8 //队列最大数量
+#define MAX_PACKET_SIZE 256 //单个队列发送的最大数据量
 
 typedef enum{
 	CMD_OK = 0,
@@ -32,22 +29,10 @@ typedef enum{
 	Timing_DONE,
 }Timing_Status;
 
-typedef enum {
-    PACKET_TYPE_GPS,
-    PACKET_TYPE_DATATX,
-    PACKET_TYPE_HEART,
-    PACKET_TYPE_COUNT
-} UART_Packet_Type;
 
 typedef struct __attribute__((packed)){
-    union {
-        uint8_t gps_data[GPS_PACKET_MAX_SIZE];
-        uint8_t datatx_data[DATATX_PACKET_MAX_SIZE];
-        uint8_t heart_data[HEART_PACKET_MAX_SIZE];
-    } data_buffer;
+    uint8_t data[MAX_PACKET_SIZE];
     uint16_t length;
-    uint32_t min_interval_ms;
-    UART_Packet_Type type;
 } UART_Packet;
 
 typedef struct {
@@ -55,9 +40,10 @@ typedef struct {
     uint16_t head;
     uint16_t tail;
     uint8_t count;
+    uint8_t isSending;
 } UART_Queue;
 
-extern uint8_t processing_buffer[];
+extern uint8_t process_buffer[];
 extern volatile uint8_t *wp;
 extern volatile uint8_t *rp;
 extern volatile uint16_t receivercode;
@@ -69,6 +55,9 @@ extern uint8_t datatx[23];
 extern time_t base_timestamp;
 extern uint64_t base_systick;
 extern volatile uint16_t GPS_count;
+extern uint8_t tx_buffer[256];
+extern uint16_t tx_length;
+extern volatile uint64_t high_counter;
 
 CMD_Status CMD_Judge(void);
 CMD_Status CMD_Execute(void);
@@ -84,7 +73,8 @@ time_t standard_to_stamp(uint8_t *time);
 Timing_Status GPS_message_process(uint8_t *time);
 void Sendheart(void);
 void UART_Queue_Init(void);
-uint8_t UART_Enqueue_Packet(uint8_t *data, uint16_t len, uint32_t min_interval, UART_Packet_Type type);
-void UART_Process_Send_Queue(void);
+uint8_t UART_Send_Data(uint8_t *data, uint16_t len);
+void ASIC_message_read(void);
+void Data_Consolidation(void);
 
 #endif

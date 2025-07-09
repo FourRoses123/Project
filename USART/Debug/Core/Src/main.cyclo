@@ -1,6 +1,7 @@
-../Core/Src/main.c:31:5:main	11
-../Core/Src/main.c:107:6:HAL_GPIO_EXTI_Callback	4
-../Core/Src/main.c:126:6:delay_ms_blocking	2
-../Core/Src/main.c:139:5:_write	1
-../Core/Src/main.c:145:6:SystemClock_Config	4
-../Core/Src/main.c:182:6:Error_Handler	1
+../Core/Src/main.c:38:5:main	11
+../Core/Src/main.c:116:6:Resettime	4
+../Core/Src/main.c:139:6:wipe_cache	3
+../Core/Src/main.c:147:6:HAL_GPIO_EXTI_Callback	10
+../Core/Src/main.c:186:5:_write	1
+../Core/Src/main.c:192:6:SystemClock_Config	4
+../Core/Src/main.c:229:6:Error_Handler	1

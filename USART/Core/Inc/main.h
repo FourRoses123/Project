@@ -13,9 +13,11 @@ extern "C" {
 #include "stdbool.h"
 #include "inttypes.h"
 #include "time.h"
+#include "stdlib.h"
 
 #define BUF_SIZE 2048
 #define HANDLE_SIZE 4096
+#define ONESEC 0xf4240
 
 #define LED_R_Pin GPIO_PIN_0
 #define LED_R_GPIO_Port GPIOA

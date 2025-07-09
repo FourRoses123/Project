@@ -11,6 +11,9 @@
 #include "user_usart.h"
 
 void SystemClock_Config(void);
+void wipe_cache(void);
+void Resettime(void);
+
 uint8_t rx_buffer[BUF_SIZE];
 volatile uint16_t rx_length = 0;
 volatile uint16_t data_ready = 0;
@@ -21,12 +24,16 @@ uint8_t res = 0;
 SD_Config current_config;
 volatile uint8_t open = 0;
 volatile uint8_t timing = 0;
-volatile uint32_t last_trigger_time = 0;
 volatile uint32_t timer_ms_count = 0;
-char tx_buffer_ascii[100]; //测试用，之后删
-uint32_t interval = 20;
+volatile uint32_t last_trigger_time = 0;
+char tx_buffer_ascii[1024]; //测试用，之后删
 volatile uint32_t last_send_tick = 0;
-volatile uint16_t GPS_timing_count = 0;
+volatile uint32_t last_send_time = 0;
+const uint32_t interval = 1000;
+volatile uint32_t settime = 0;
+int retry = 127;
+volatile uint16_t start = 0;
+static uint16_t rollover_action_done = 0;
 
 int main(void)
 {
@@ -63,10 +70,11 @@ int main(void)
 	__HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
 	HAL_NVIC_EnableIRQ(EXTI4_IRQn);
   }
+  wipe_cache();
 
   while (1)
   {
-	  UART_Process_Send_Queue();
+	  Resettime();
 	  if(data_ready)
 	  {
 		  data_ready = 0;
@@ -77,30 +85,63 @@ int main(void)
 		  {
 			  time_t GPStime = standard_to_stamp(time);
 			  set_base_time(GPStime);
-			  timing = 11;
-			  GPS_timing_count = 0;
+			  settime = HAL_GetTick();
+			  timing = 6;
 			  Toggle_G();
 		  }
 	  }
-	  if(ReadResult() == HAL_OK)
+	  ASIC_message_read();
+	  uint32_t sendtime = HAL_GetTick();
+	  if(sendtime - last_send_time >= interval)
 	  {
-		  Send_Data();
+		  last_send_time = sendtime;
+		  Data_Consolidation();
 		  if(open == 1)
 		  {
 			  int offset = 0;
-			  for (int i = 0; i < sizeof(datatx); i++) //测试用，之后删
-				  offset += snprintf(tx_buffer_ascii + offset, sizeof(tx_buffer_ascii) - offset, "%02X ", datatx[i]);
+			  for (int i = 0; i < tx_length; i++) //测试用，之后删
+				  offset += snprintf(tx_buffer_ascii + offset, sizeof(tx_buffer_ascii) - offset, "%02X ", tx_buffer[i]);
 			  snprintf(tx_buffer_ascii + offset, sizeof(tx_buffer_ascii) - offset, "\r\n");
 			  if(f_write(&fil, tx_buffer_ascii, strlen(tx_buffer_ascii), &bw) == FR_OK)
 			  {
 				  f_sync(&fil);
 			  }
-			  /*
-			  if(f_write(&fil, datatx, transmitlength, &bw) == FR_OK)
+			  /*if(f_write(&fil, tx_buffer, tx_length, &bw) == FR_OK)
 				  f_sync(&fil);*/
 		  }
 	  }
   }
+}
+
+void Resettime(void)
+{
+	uint8_t resetbit = (high_counter >> 32) & 0x01;
+	if (resetbit == 0)
+	{
+		if (rollover_action_done == 0)
+		{
+		  Toggle_R();
+		  start = 1;
+		  rollover_action_done = 1;
+		}
+	}
+	else
+	{
+		rollover_action_done = 0;
+	}
+	if (start == 1)
+	{
+		start = 0;
+		wrap_count++;
+	}
+}
+
+void wipe_cache(void)//清除非本次上电的ASIC缓存
+{
+	  while(retry >=0 && ReadResult() != ASIC_EMPTY)
+	  {
+		  retry--;
+	  }
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
@@ -108,31 +149,38 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	if(GPIO_Pin == PPS_Pin)
 	{
 		uint32_t now = HAL_GetTick();
-		if(now - last_trigger_time > 800)
+		if(timing == 6 && now - settime < 2000)
 		{
-			__disable_irq();
-			last_trigger_time = now;
-			time_t time = base_timestamp + 0xf4240;
+			timing = 7;
+			time_t time = base_timestamp + ONESEC;
 			set_base_time(time);
-			if(timing < 10)
+			last_trigger_time = HAL_GetTick();
+			return;
+		}
+		else if(timing == 6 && now - settime >= 2000)
+		{
+			timing = 0;
+			return;
+		}
+		if(now - last_trigger_time > 1002)
+		{
+			last_trigger_time = now;
+			timing = 1;
+		}
+		else if(now - last_trigger_time >= 999)
+		{
+			__set_BASEPRI(1 << 4);
+			last_trigger_time = now;
+			if(timing < 5)
 				timing++;
-			Toggle_R();
-			__enable_irq();
+			else if(timing == 7)
+			{
+				time_t time = base_timestamp + ONESEC;
+				set_base_time(time);
+			}
+			__set_BASEPRI(0);
 		}
 	}
-}
-
-void delay_ms_blocking(uint32_t ms)
-{
-    HAL_TIM_Base_Stop_IT(&htim7);
-    __HAL_TIM_SET_COUNTER(&htim7, 0);
-    __HAL_TIM_CLEAR_FLAG(&htim7, TIM_FLAG_UPDATE);
-    timer_ms_count = ms;
-    HAL_TIM_Base_Start_IT(&htim7);
-    while (timer_ms_count > 0)
-    {
-		__WFI();
-    }
 }
 
 int _write(int file, char *ptr, int len)

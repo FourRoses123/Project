@@ -15,8 +15,8 @@
 ../Core/Src/stm32l4xx_it.c:281:6:TIM2_IRQHandler	1
 ../Core/Src/stm32l4xx_it.c:295:6:SPI1_IRQHandler	1
 ../Core/Src/stm32l4xx_it.c:309:6:SPI2_IRQHandler	1
-../Core/Src/stm32l4xx_it.c:323:6:USART1_IRQHandler	8
-../Core/Src/stm32l4xx_it.c:358:6:TIM6_DAC_IRQHandler	1
-../Core/Src/stm32l4xx_it.c:369:6:TIM7_IRQHandler	1
-../Core/Src/stm32l4xx_it.c:383:6:DMA2_Channel6_IRQHandler	1
-../Core/Src/stm32l4xx_it.c:397:6:DMA2_Channel7_IRQHandler	1
+../Core/Src/stm32l4xx_it.c:323:6:USART1_IRQHandler	7
+../Core/Src/stm32l4xx_it.c:356:6:TIM6_DAC_IRQHandler	1
+../Core/Src/stm32l4xx_it.c:367:6:TIM7_IRQHandler	1
+../Core/Src/stm32l4xx_it.c:381:6:DMA2_Channel6_IRQHandler	1
+../Core/Src/stm32l4xx_it.c:395:6:DMA2_Channel7_IRQHandler	1

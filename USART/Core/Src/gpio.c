@@ -92,6 +92,7 @@ void MX_GPIO_Init(void)
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI4_IRQn, 0, 0);
+
 }
 
 /* USER CODE BEGIN 2 */

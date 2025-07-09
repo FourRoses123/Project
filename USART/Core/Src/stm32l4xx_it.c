@@ -329,15 +329,15 @@ void USART1_IRQHandler(void)
 	  HAL_UART_AbortReceive(&huart1);
 	  rx_length = sizeof(rx_buffer) - __HAL_DMA_GET_COUNTER(huart1.hdmarx);
 	  __set_BASEPRI(1 << 4);
-	  if(rp != wp && wp + rx_length <= &processing_buffer[HANDLE_SIZE])
+	  if(rp != wp && wp + rx_length <= &process_buffer[HANDLE_SIZE])
 	  {
 		  memcpy(wp, rx_buffer, rx_length);
 		  wp += rx_length;
 	  }
-	  else if(rp == wp && wp + rx_length <= &processing_buffer[HANDLE_SIZE])
+	  else if(rp == wp && wp + rx_length <= &process_buffer[HANDLE_SIZE])
 	  {
-		  memcpy(processing_buffer, rx_buffer, rx_length);
-		  rp = processing_buffer;
+		  memcpy(process_buffer, rx_buffer, rx_length);
+		  rp = process_buffer;
 		  wp = rp + rx_length;
 	  }
 	  __set_BASEPRI(0);
@@ -346,8 +346,6 @@ void USART1_IRQHandler(void)
 		  GPS_count++;
 		  data_ready = 1;
 	  }
-	  if(timing == 11)
-		  GPS_timing_count++;
 	  HAL_UART_Receive_DMA(&huart1, rx_buffer, sizeof(rx_buffer));
 	}
 }

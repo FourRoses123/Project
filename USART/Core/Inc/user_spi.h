@@ -10,17 +10,24 @@
 
 #define PEAKTIME_PERIOD (1ULL << 33)
 
-extern uint16_t PEAKTH;
-extern uint16_t ALMSTTH;
-extern uint16_t PKWND;
-extern uint8_t codeid;
-extern uint16_t peaklevel;
-extern uint64_t peaktime;
-extern uint8_t result[6];
+typedef enum{
+	ASIC_OK = 0,
+	ASIC_ERROR,
+	ASIC_EMPTY,
+}ASIC_Status;
+
+extern volatile uint16_t PEAKTH;
+extern volatile uint16_t ALMSTTH;
+extern volatile uint16_t PKWND;
+extern volatile uint8_t codeid;
+extern volatile uint16_t peaklevel;
+extern volatile uint64_t peaktime;
+extern volatile uint8_t result[6];
+extern volatile int32_t wrap_count;
 
 uint8_t ASIC_TransmitReceive(uint8_t data);
 void ASIC_CMD(uint8_t address, uint16_t data);
-HAL_StatusTypeDef ReadResult(void);
+ASIC_Status ReadResult(void);
 void ASIC_RST(void);
 
 #endif
